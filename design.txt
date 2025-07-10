@@ -1,0 +1,125 @@
+Berikut ini adalah versi **lengkap dan terbaru** dari **Design Plan Sistem Aplikasi Billing Rental PS** yang bisa langsung kamu salin:
+
+---
+
+### 🧱 1. Arsitektur Umum
+
+* **Backend**: Web-based, **Node.js (Express)**, Database: **SQLite**
+* **Frontend**: Menggunakan framework modern (misal: Next.js dengan komponen kustom atau library UI lain)
+* **UI/UX**: Desain modern dengan sidebar navigasi, efek interaktif, dashboard yang menarik, tema gelap dengan aksen merah
+* **TV Android**: Tampilkan QR, pairing, lockscreen, kontrol volume & daya
+* **Komunikasi lokal**: WebSocket (TV ↔ Server lokal)
+* **Komunikasi online**: Polling dari lokal ke cloud (sinkron login member)
+
+---
+
+### 📺 2. Fungsi TV Android
+
+* Tampilkan **QR code dinamis** (login WhatsApp)
+* Lockscreen saat belum pairing atau tidak aktif
+* Kontrol volume, matikan TV via ADB
+* QR untuk pairing awal dan login member
+* Notifikasi jika belum pairing
+
+---
+
+### 💡 3. Pairing TV
+
+* Pair otomatis via IP + token (saat TV dinyalakan)
+* Admin bisa beri nama TV (TV01, TV02...)
+* Mapping IP ke TV bisa manual jika dibutuhkan
+* QR pairing akan tampil jika belum dipasangkan
+
+---
+
+### 👤 4. Login Member
+
+* Opsi 1: QR ke WhatsApp `https://wa.me/628xxxx?text=TV01`
+* Setelah scan, pesan dikirim → server Open-WA proses
+* Member pilih paket melalui balasan WA
+* Setelah dipilih, server aktifkan sesi TV sesuai
+
+---
+
+### 💼 5. Sistem Member & Paket
+
+* Member punya paket tersimpan (1 jam x3, dst)
+* Paket bisa dibeli/diberikan manual
+* Paket aktif otomatis saat login
+* Admin bisa kelola jenis paket dari dashboard
+
+---
+
+### 🔘 6. Aktivasi Sesi
+
+* **Admin**: pilih TV → pilih paket → mulai sesi
+* **Operator**: akses terbatas (berdasarkan izin)
+* **Member**: self-service via WhatsApp
+* Fitur: tambah durasi, stop, reset harian otomatis
+
+---
+
+### 🔐 7. Hak Akses Admin & Operator
+
+* Login awal: `admin / ikbal`
+* Admin bisa tambah operator & atur hak akses
+* Operator hanya akses fungsi tertentu
+
+---
+
+### 🧠 8. Fitur Tambahan
+
+* Notifikasi ke operator (WA/UI) jika sesi hampir habis
+* Terintegrasi dengan kasir (input pembayaran manual)
+* Mobile-friendly dashboard
+* Tampilan kartu (per TV): status, kontrol, timer
+
+---
+
+### 🌐 9. Dukungan Hybrid (Online + Lokal)
+
+* Cloud hanya untuk login member via WhatsApp
+* Server lokal polling cloud untuk aktivasi
+* Tidak butuh koneksi langsung dari user ke lokal
+* Bisa login member meski backend tetap lokal
+
+---
+
+### 📦 10. Fitur Manajemen Tambahan
+
+* Reset sesi harian otomatis
+* Tambah durasi sesi
+* Monitor seluruh TV real-time
+* Logging sesi per user & TV
+* Tambah TV otomatis saat pairing
+
+---
+
+### 🤖 11. WhatsApp Gateway (Open-WA)
+
+* Gunakan `wa-web.js` (whatsapp web js)
+* Embedded langsung ke Billing Server (Node.js)
+* Handler onMessage langsung proses aktivasi
+* Tidak perlu proses terpisah atau license key
+* QR scan hanya sekali, sesi bisa disimpan
+
+---
+
+### 🔧 Infrastruktur yang Direkomendasikan
+
+* **Server lokal**: PC/laptop (Node.js backend + Open-WA)
+* **Router lokal**: Opsional captive portal
+* **Cloud server** (opsional): Login member saja
+* **Android TV**: Browser/kiosk app yang tampil QR & kontrol
+
+---
+
+**Catatan**:
+
+* QR login & pairing selalu dinamis per TV
+* Sistem bisa offline, semi-online, atau full cloud
+* Siap dikembangkan untuk cabang atau ekspansi
+
+---
+
+Silakan salin semuanya. Kalau mau versi markdown, Word, atau PDF, tinggal bilang. Mau lanjut ke struktur file project atau script pairing TV?
