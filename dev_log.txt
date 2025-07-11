@@ -1,0 +1,317 @@
+**Tanggal & Waktu:** 2024-08-04 10:00:00
+
+**Tugas yang Selesai:**
+- Mengimplementasikan fitur auto-start untuk aplikasi helper Android TV.
+- Aplikasi sekarang akan terbuka secara otomatis saat perangkat dinyalakan.
+
+**File yang Diubah/Dibuat:**
+- `helperAndroidTV/app/src/main/java/com/example/helperandroidtv/BootReceiver.kt` (dibuat)
+- `helperAndroidTV/app/src/main/AndroidManifest.xml` (diubah)
+- `helperAndroidTV/app/src/main/java/com/example/helperandroidtv/MainActivity.kt` (diubah)
+
+**Keputusan Penting & Konteks:**
+- **Implementasi Auto-Start:** Untuk membuat aplikasi berjalan saat boot, sebuah `BroadcastReceiver` (`BootReceiver.kt`) dibuat untuk mendengarkan siaran `ACTION_BOOT_COMPLETED`. Receiver ini kemudian meluncurkan `MainActivity`.
+- **Izin Android:** Izin `RECEIVE_BOOT_COMPLETED` ditambahkan ke `AndroidManifest.xml`. Selain itu, untuk versi Android yang lebih baru, aplikasi memerlukan izin `SYSTEM_ALERT_WINDOW` untuk dapat menampilkan dirinya di atas aplikasi lain setelah boot. Logika untuk memeriksa dan meminta izin ini ditambahkan ke `MainActivity`.
+- **Penanganan Masalah:** Awalnya, ada masalah di mana aplikasi tidak dimulai karena batasan pada `BroadcastReceiver` di Android versi baru. Ini diselesaikan dengan memastikan `receiver` di `AndroidManifest.xml` dikonfigurasi dengan benar (`android:exported="true"`) dan dengan menangani permintaan izin `SYSTEM_ALERT_WINDOW` secara eksplisit.
+
+**Saran Langkah Berikutnya:**
+- Uji fitur auto-start pada perangkat fisik dengan versi Android yang berbeda untuk memastikan kompatibilitas.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-08-03 10:00:00
+
+**Tugas yang Selesai:**
+- Memperbaiki masalah flickering dan getaran pada helper app setelah pairing berhasil.
+- Menganalisis dan mengonfirmasi bahwa server mengidentifikasi TV menggunakan `tvId` unik, bukan alamat IP, sehingga perubahan IP tidak memengaruhi pengenalan perangkat.
+
+**File yang Diubah/Dibuat:**
+- `helperAndroidTV/app/src/main/java/com/example/helperandroidtv/MainActivity.kt` (diubah)
+- `backend/controllers/tvController.js` (dianalisis)
+- `backend/services/tvService.js` (dianalisis)
+
+**Keputusan Penting & Konteks:**
+- **Masalah Flickering:** Setelah pairing, layar utama aplikasi helper berkedip dan bergetar. Ini disebabkan oleh logika di `startSessionPolling` yang terus-menerus meluncurkan ulang `Activity` meskipun sudah berada di homescreen. Solusinya adalah mengubah logika untuk hanya membawa `Activity` ke depan (`FLAG_ACTIVITY_REORDER_TO_FRONT`) jika status TV bukan 'active', mencegah restart yang tidak perlu.
+- **Identifikasi TV vs. IP:** Ada kekhawatiran apakah perubahan alamat IP TV akan menyebabkan server tidak lagi mengenalinya. Analisis pada kode backend (`tvController.js` dan `tvService.js`) mengonfirmasi bahwa identifikasi utama adalah `tvId` yang ditetapkan saat pairing. Alamat IP hanya digunakan sesaat untuk mencegah duplikasi saat pembuatan awal dan tidak digunakan sebagai pengenal utama setelahnya. Ini memastikan bahwa koneksi tetap stabil meskipun IP berubah.
+
+**Saran Langkah Berikutnya:**
+- Lakukan pengujian lebih lanjut pada skenario di mana koneksi jaringan TV terputus dan terhubung kembali untuk memastikan pemulihan sesi berjalan lancar.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-08-02 10:00:00
+
+**Tugas yang Selesai:**
+- Mengoptimalkan proses penemuan server di aplikasi Android TV untuk koneksi yang lebih cepat dan andal.
+- Mengimplementasikan penemuan server berbasis UDP sebagai metode utama.
+- Memperbaiki bug di mana server backend mengiklankan alamat IP virtual (APIPA 169.254.x.x) saat berjalan di mesin yang sama dengan emulator Android.
+
+**File yang Diubah/Dibuat:**
+- `helperAndroidTV/app/src/main/java/com/example/helperandroidtv/MainActivity.kt` (diubah)
+- `helperAndroidTV/app/src/main/AndroidManifest.xml` (diubah)
+- `backend/services/udpDiscoveryService.js` (diubah)
+- `backend/index.js` (diubah)
+
+**Keputusan Penting & Konteks:**
+- **Masalah:** Proses penemuan server awal di aplikasi TV lambat karena harus memindai seluruh subnet jaringan. Selain itu, saat menggunakan emulator Android dalam mode bridge, server backend salah mengiklankan alamat IP virtual (APIPA) alih-alih alamat jaringan lokal yang sebenarnya, menyebabkan kegagalan koneksi.
+- **Solusi:** 
+  1. **Penemuan UDP:** Mengimplementasikan mekanisme penemuan berbasis broadcast UDP. Aplikasi TV sekarang mengirimkan pesan broadcast, dan server merespons secara langsung dengan alamatnya. Ini secara drastis mengurangi waktu penemuan dari beberapa menit menjadi beberapa detik.
+  2. **Pemfilteran IP:** Menambahkan logika di sisi backend (`udpDiscoveryService.js` dan `index.js`) untuk secara eksplisit memfilter dan mengabaikan alamat IP APIPA (yang dimulai dengan '169.254.'). Ini memastikan bahwa hanya alamat IP jaringan yang valid dan dapat dijangkau yang diiklankan.
+- Alur penemuan sekarang diprioritaskan: Penemuan UDP -> IP Terakhir Diketahui -> Pemindaian Subnet Penuh -> Input Manual.
+
+**Saran Langkah Berikutnya:**
+- Lakukan pengujian pada berbagai konfigurasi jaringan untuk memastikan keandalan penemuan UDP.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-08-01 11:00:00
+
+**Tugas yang Selesai:**
+- Memperbaiki bug "no value for qrcode" di aplikasi helper Android TV.
+- Memperbaiki bug `SQLITE_CONSTRAINT: UNIQUE constraint failed: tvs.ip_address`.
+- Memperbaiki alur logika di `MainActivity.kt` untuk mengambil kode QR dengan benar setelah TV dibuat.
+- Memperbarui `tvService.js` untuk menangani pembuatan TV dengan alamat IP yang sudah ada.
+
+**File yang Diubah/Dibuat:**
+- `backend/controllers/tvController.js` (diubah)
+- `backend/services/tvService.js` (diubah)
+- `helperAndroidTV/app/src/main/java/com/example/helperandroidtv/MainActivity.kt` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Kesalahan "no value for qrcode" disebabkan oleh kesalahan logika di aplikasi Android, yang mengharapkan data QR dikirim bersamaan dengan respons pembuatan TV. Alur yang benar adalah membuat TV terlebih dahulu, mendapatkan ID-nya, lalu membuat permintaan terpisah untuk kode QR. Ini telah diperbaiki.
+- Kesalahan `UNIQUE constraint` terjadi ketika aplikasi helper dimulai ulang dan mencoba membuat ulang TV dengan alamat IP yang sama. Logika di `tvService.js` sekarang memeriksa apakah TV dengan IP tersebut sudah ada sebelum mencoba membuatnya, sehingga mencegah kesalahan.
+
+**Saran Langkah Berikutnya:**
+- Lakukan pengujian menyeluruh pada aplikasi helper Android TV untuk memastikan alur pairing berfungsi dengan lancar.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-31 10:00:00
+
+**Tugas yang Selesai:**
+- Menambahkan fitur penambahan TV melalui QR code.
+- Membuat endpoint baru `GET /api/tvs/name/:name` untuk mendapatkan atau membuat TV berdasarkan nama (unique identifier dari QR code).
+- Membuat endpoint baru `GET /api/tvs/:id/qrcode` untuk menghasilkan QR code yang berisi ID TV.
+- Menambahkan utilitas untuk menghasilkan QR code di `backend/utils/qrCodeUtils.js`.
+- Menambahkan validasi input untuk rute TV menggunakan `express-validator`.
+- Meningkatkan penanganan error di `tvController.js` dan `tvService.js`.
+
+**File yang Diubah/Dibuat:**
+- `backend/services/tvService.js` (diubah)
+- `backend/controllers/tvController.js` (diubah)
+- `backend/routes/tvs.js` (diubah)
+- `backend/utils/qrCodeUtils.js` (dibuat)
+- `backend/middleware/validator.js` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Fitur QR code menyederhanakan proses penambahan TV baru. Aplikasi helper di Android TV akan menghasilkan unique identifier, menampilkannya sebagai QR code, dan setelah dipindai, TV akan terdaftar di sistem.
+- Setelah terdaftar, TV akan menampilkan QR code lain yang berisi ID TV. QR code ini dapat dipindai oleh pelanggan untuk memulai sesi, yang akan diimplementasikan selanjutnya.
+- Penambahan validasi dan penanganan error yang lebih baik meningkatkan keandalan dan keamanan API.
+
+**Saran Langkah Berikutnya:**
+- Mengembangkan aplikasi helper untuk Android TV yang akan menampilkan QR code pendaftaran.
+- Mengimplementasikan alur login member melalui pemindaian QR code TV.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-30 10:00:00
+
+**Tugas yang Selesai:**
+- Menonaktifkan sementara fitur otentikasi (login) di seluruh aplikasi.
+- Menghapus middleware otentikasi (`protect`, `authorize`) dari semua rute API di backend.
+- Menghapus komponen dan logika terkait login di frontend, termasuk halaman login, layout yang dilindungi, dan konteks otentikasi.
+- Menghapus file-file yang tidak lagi digunakan terkait otentikasi (`authController.js`, `authService.js`, `authMiddleware.js`, `auth.js`, dll.).
+
+**File yang Diubah/Dibuat:**
+- `backend/routes/tvs.js` (diubah)
+- `backend/routes/packages.js` (diubah)
+- `backend/routes/members.js` (diubah)
+- `backend/routes/transactions.js` (diubah)
+- `backend/index.js` (diubah)
+- `frontend/src/app/management/layout.tsx` (diubah)
+- `frontend/src/contexts/AuthContext.tsx` (diubah)
+- `frontend/src/app/management/login/` (dihapus)
+- `backend/routes/auth.js` (dihapus)
+- `backend/controllers/authController.js` (dihapus)
+- `backend/services/authService.js` (dihapus)
+- `backend/middleware/authMiddleware.js` (dihapus)
+
+**Keputusan Penting & Konteks:**
+- Fitur login dinonaktifkan untuk sementara sesuai permintaan untuk menyederhanakan alur aplikasi saat ini. Semua endpoint API sekarang dapat diakses tanpa token otentikasi. Frontend juga telah disesuaikan untuk tidak lagi memerlukan proses login. Ini adalah perubahan sementara.
+
+**Saran Langkah Berikutnya:**
+- Lanjutkan pengembangan fitur inti lainnya.
+- Jika otentikasi diperlukan kembali di masa mendatang, fungsionalitas dapat diaktifkan kembali dengan mengembalikan perubahan yang dibuat.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-29 10:00:00
+
+**Tugas yang Selesai:**
+- Mengimplementasikan fitur pelaporan transaksi keuangan sesuai dengan `design.txt`.
+- Membuat tabel `transactions` di `database.js` untuk mencatat semua transaksi keuangan.
+- Membuat `transactionService.js` dan `transactionController.js` untuk mengelola logika bisnis dan rute API terkait transaksi.
+- Mengintegrasikan pembuatan transaksi ke dalam `tvService.js` untuk sesi reguler, paket, dan member.
+- Membuat halaman frontend (`/management/transactions`) untuk menampilkan daftar transaksi dengan format yang mudah dibaca.
+- Merefaktor sistem otentikasi frontend untuk menggunakan React Context (`AuthContext.tsx`).
+- Memperbarui halaman login dan tata letak manajemen untuk menggunakan `useAuth` hook, memusatkan logika otentikasi dan meningkatkan pemeliharaan.
+- Memperbaiki bug startup server yang disebabkan oleh kesalahan implementasi singleton pada koneksi database.
+
+**File yang Diubah/Dibuat:**
+- `backend/database.js` (diubah)
+- `backend/services/transactionService.js` (dibuat)
+- `backend/controllers/transactionController.js` (dibuat)
+- `backend/routes/transactions.js` (dibuat)
+- `backend/index.js` (diubah)
+- `backend/services/tvService.js` (diubah)
+- `frontend/src/app/management/transactions/page.tsx` (dibuat)
+- `frontend/src/app/management/layout.tsx` (diubah)
+- `frontend/src/contexts/AuthContext.tsx` (dibuat)
+- `frontend/src/app/layout.tsx` (diubah)
+- `frontend/src/app/management/login/page.tsx` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Penambahan tabel `transactions` memberikan visibilitas penuh ke dalam aliran pendapatan dari berbagai jenis sesi, yang merupakan persyaratan inti dari `design.txt`.
+- Refaktorisasi ke `AuthContext` adalah peningkatan kualitas kode yang signifikan. Ini menghilangkan kebutuhan untuk meneruskan prop otentikasi secara manual atau mengakses `localStorage` secara langsung di seluruh komponen, membuat status otentikasi global mudah diakses dan dikelola.
+- Bug startup database menyoroti pentingnya pola desain yang benar. Mengimplementasikan pola singleton dengan benar untuk koneksi database memastikan bahwa hanya satu koneksi yang dibuat dan dibagikan di seluruh aplikasi, mencegah kesalahan dan meningkatkan efisiensi.
+
+**Saran Langkah Berikutnya:**
+- Lanjutkan pengembangan berdasarkan `design.txt`, mungkin dengan fokus pada fitur manajemen kasir yang lebih canggih atau dasbor analitik.
+- Lakukan pengujian menyeluruh pada alur transaksi untuk memastikan semua jenis sesi dicatat dengan benar.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-28 10:00:00
+
+**Tugas yang Selesai:**
+- Mengimplementasikan fitur notifikasi WhatsApp untuk sesi yang akan berakhir sesuai dengan `design.txt`.
+- Membuat `notificationService.js` yang menggunakan `node-cron` untuk memeriksa sesi yang akan berakhir setiap menit.
+- Menambahkan kolom `notification_sent` ke tabel `tvs` untuk mencegah pengiriman notifikasi duplikat.
+- Memperbaiki `SQLITE_ERROR: no such column: t.session_end_time` dengan memastikan skema database diperbarui dan digunakan dengan benar.
+- Memperbarui `tvService.js` untuk mereset status `notification_sent` saat sesi baru dimulai.
+- Memperbaiki `TypeError` di rute TV dengan menyelaraskan nama fungsi antara `tvController.js` dan `tvs.js`.
+
+**File yang Diubah/Dibuat:**
+- `backend/services/notificationService.js` (dibuat)
+- `backend/database.js` (diubah)
+- `backend/services/tvService.js` (diubah)
+- `backend/controllers/tvController.js` (diubah)
+- `backend/routes/tvs.js` (diubah)
+- `backend/index.js` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Penggunaan `node-cron` menyediakan mekanisme penjadwalan yang andal dan sederhana untuk tugas latar belakang.
+- Penambahan kolom `notification_sent` adalah langkah penting untuk membuat sistem notifikasi menjadi idempoten, memastikan bahwa pengguna tidak menerima pesan yang sama berulang kali untuk sesi yang sama.
+- `SQLITE_ERROR` menyoroti pentingnya manajemen migrasi skema database. Untuk proyek ini, solusi sementaranya adalah menghapus dan membuat ulang file database, tetapi untuk produksi, alat migrasi seperti `knex-migrations` akan direkomendasikan.
+
+**Saran Langkah Berikutnya:**
+- Lanjutkan pengembangan berdasarkan `design.txt`, kemungkinan fokus pada fitur manajemen kasir atau laporan keuangan.
+- Lakukan pengujian menyeluruh pada fitur notifikasi untuk memastikan pesan dikirim pada waktu yang tepat dan tidak ada duplikasi.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-27 10:00:00
+
+**Tugas yang Selesai:**
+- Melakukan perbaikan bug dan peningkatan kualitas kode.
+- Memperbaiki `TypeError: tvs.map is not a function` di halaman manajemen TV dengan menyesuaikan penanganan respons API di frontend (`frontend/src/app/management/tvs/page.tsx`) untuk mengekstrak array dari properti `data`.
+- Mengatasi `hydration-mismatch` error di seluruh dasbor manajemen dengan memperkenalkan status `loading` di `frontend/src/app/management/layout.tsx`. Ini memastikan render sisi klien dan sisi server selaras selama pemeriksaan otentikasi.
+
+**File yang Diubah/Dibuat:**
+- `frontend/src/app/management/tvs/page.tsx` (diubah)
+- `frontend/src/app/management/layout.tsx` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Perbaikan `TypeError` adalah koreksi sederhana namun penting yang disebabkan oleh ketidaksesuaian antara bagaimana API backend mengirim data (dalam objek `{ data: [...] }`) dan bagaimana frontend mengharapkannya (sebagai array langsung). Menyesuaikan logika pengambilan data di frontend adalah solusi yang tepat.
+- `hydration-mismatch` adalah masalah umum di aplikasi Next.js yang menggunakan render sisi klien untuk logika otentikasi. Dengan menunda render konten yang bergantung pada otentikasi hingga status hidrasi dikonfirmasi (menggunakan hook `useEffect`), kami memastikan pengalaman pengguna yang mulus tanpa error konsol.
+
+**Saran Langkah Berikutnya:**
+- Lakukan tinjauan kode komprehensif untuk mengidentifikasi potensi peningkatan kualitas dan pemeliharaan lainnya.
+- Pertimbangkan untuk menambahkan kerangka kerja pengujian end-to-end seperti Cypress atau Playwright untuk menangkap regresi dan error seperti ini secara otomatis di masa mendatang.
+
+--- (Pemisah Entri) ---
+
+- **Fitur**: Implementasi Hak Akses Admin & Operator.
+- **Detail**: 
+  - Menambahkan tabel `users` dan `roles` ke database (`backend/database.js`) dengan seeding data awal.
+  - Menginstal `bcryptjs` dan `jsonwebtoken` untuk otentikasi.
+  - Membuat `authService` (`backend/services/authService.js`) untuk logika login dan pembuatan token JWT.
+  - Membuat `authController` (`backend/controllers/authController.js`) dan rute terkait (`backend/routes/auth.js`).
+  - Mengimplementasikan middleware `protect` dan `authorize` (`backend/middleware/authMiddleware.js`) untuk melindungi rute.
+  - Membuat halaman login manajemen di frontend (`frontend/src/app/management/login/page.tsx`).
+  - Melindungi halaman manajemen (`frontend/src/app/management/page.tsx`) untuk memeriksa otentikasi.
+  - Mengkonfigurasi proxy di `next.config.ts` untuk meneruskan permintaan API ke backend.
+
+**Tanggal: 2024-05-24**
+- **Fitur**: Kerangka Dasbor Manajemen.
+- **Detail**:
+  - Membuat tata letak dasbor manajemen (`frontend/src/app/management/layout.tsx`) dengan navigasi sidebar dan fungsi logout.
+  - Membuat halaman placeholder untuk manajemen TV, Anggota, dan Paket (`/tvs`, `/members`, `/packages`).
+  - Melindungi rute API backend untuk TV, Anggota, dan Paket menggunakan middleware otentikasi dan otorisasi.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-26 14:00:00
+
+**Tugas yang Selesai:**
+- Mengimplementasikan alur login member dan pemilihan paket melalui WhatsApp sesuai dengan `design.txt`.
+- Memperbarui `backend/whatsapp.js` untuk menangani pesan masuk dengan format `TV<ID>`.
+- Menambahkan logika untuk memeriksa status pendaftaran member, menyajikan daftar paket yang tersedia, dan memulai sesi TV berdasarkan pilihan pengguna.
+- Menggunakan `userContext` dalam memori untuk melacak status percakapan pengguna (misalnya, saat pengguna sedang dalam proses memilih paket).
+
+**File yang Diubah/Dibuat:**
+- `backend/whatsapp.js` (diubah secara signifikan)
+- `backend/services/memberService.js` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Alur interaksi WhatsApp dirancang untuk menjadi stateful dalam satu sesi. Ketika seorang member mengirim `TV<ID>`, sistem menyimpan konteks (`tvId` dan tahap `select_package`) untuk pesan berikutnya dari member tersebut. Ini memungkinkan pengguna untuk hanya membalas dengan nomor untuk memilih paket.
+- `userContext` yang disimpan di memori adalah solusi sederhana untuk prototipe ini. Dalam aplikasi produksi, ini harus diganti dengan solusi yang lebih kuat seperti Redis atau tabel database untuk menangani banyak pengguna secara bersamaan dan menjaga status di seluruh restart server.
+- Fungsi `createMember` di `memberService.js` diubah namanya menjadi `createMemberInternal` dan diekspor dengan dua nama (`createMember` dan `createMemberInternal`) untuk menjaga kompatibilitas dengan API publik sambil memberikan nama yang lebih deskriptif untuk penggunaan internal oleh layanan WhatsApp.
+
+**Struktur Folder Saat Ini:**
+```
+├── backend/
+│   ├── services/
+│   │   └── memberService.js (diubah)
+│   ├── whatsapp.js (diubah)
+│   └── ...
+└── ...
+```
+
+**Saran Langkah Berikutnya:**
+- Lakukan pengujian end-to-end pada alur WhatsApp: daftarkan nomor baru, kirim pesan `TV<ID>`, pilih paket, dan verifikasi bahwa sesi TV dimulai dengan benar di database dan ditampilkan di dasbor frontend.
+- Implementasikan fitur notifikasi WhatsApp untuk sesi yang akan berakhir, seperti yang diuraikan dalam `design.txt`.
+- Pertimbangkan untuk mengganti `userContext` dalam memori dengan solusi penyimpanan yang lebih persisten.
+
+--- (Pemisah Entri) ---
+
+**Tanggal & Waktu:** 2024-07-26 13:15:00
+
+**Tugas yang Selesai:**
+- Melanjutkan refaktorisasi backend dengan memindahkan logika bisnis dari `memberController.js` dan `packageController.js` ke lapisan layanan masing-masing.
+- Membuat `backend/services/memberService.js` dan `backend/services/packageService.js`.
+- Memperbarui `memberController.js` dan `packageController.js` untuk menggunakan layanan baru, menyelesaikan transisi ke arsitektur berbasis layanan untuk semua entitas utama.
+
+**File yang Diubah/Dibuat:**
+- `backend/services/memberService.js` (dibuat)
+- `backend/services/packageService.js` (dibuat)
+- `backend/controllers/memberController.js` (diubah)
+- `backend/controllers/packageController.js` (diubah)
+
+**Keputusan Penting & Konteks:**
+- Menerapkan pola lapisan layanan secara konsisten di seluruh backend menciptakan arsitektur yang dapat diprediksi dan dipelihara. Setiap controller sekarang memiliki tanggung jawab tunggal untuk menangani interaksi HTTP, sementara semua logika bisnis berada di dalam layanan.
+- Refaktorisasi ini juga menyederhanakan `memberController.js`, yang sebelumnya memiliki campuran fungsi API dan fungsi internal untuk penggunaan WhatsApp. Sekarang, kedua kasus penggunaan tersebut dilayani oleh `memberService.js` yang sama, mengurangi duplikasi.
+
+**Struktur Folder Saat Ini:**
+```
+├── backend/
+│   ├── controllers/
+│   │   ├── memberController.js (diubah)
+│   │   ├── packageController.js (diubah)
+│   │   └── tvController.js (diubah)
+│   ├── services/
+│   │   ├── memberService.js (dibuat)
+│   │   ├── packageService.js (dibuat)
+│   │   └── tvService.js (dibuat)
+│   └── ...
+```
