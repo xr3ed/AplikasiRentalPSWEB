@@ -7,7 +7,11 @@ const transactionService = require('../services/transactionService');
  */
 const getAllTransactions = async (req, res) => {
     try {
-        const transactions = await transactionService.getAllTransactions();
+        const options = {};
+        if (req.query.limit) {
+            options.limit = parseInt(req.query.limit, 10);
+        }
+        const transactions = await transactionService.getAllTransactions(options);
         res.json({ success: true, data: transactions });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server Error' });

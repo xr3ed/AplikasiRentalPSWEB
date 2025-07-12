@@ -6,6 +6,7 @@ const tvRoutes = require('./routes/tvs');
 const memberRoutes = require('./routes/members');
 const packageRoutes = require('./routes/packages');
 const transactionRoutes = require('./routes/transactions');
+const summaryRoutes = require('./routes/summary');
 const { initializeWhatsAppClient } = require('./whatsapp');
 const { startNotificationService } = require('./services/notificationService');
 // const { startDiscovery } = require('./services/discoveryService'); // mDNS dinonaktifkan
@@ -26,6 +27,7 @@ app.use('/api/tvs', tvRoutes);
 app.use('/api/members', memberRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/summary', summaryRoutes);
 
 // Contoh endpoint sederhana
 app.get('/', (req, res) => {

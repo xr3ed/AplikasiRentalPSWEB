@@ -42,7 +42,7 @@ const createTransaction = (transactionData) => {
  * Mengambil semua transaksi dengan opsi filter dan paginasi.
  * @returns {Promise<object[]>}
  */
-const getAllTransactions = () => {
+const getAllTransactions = (options = {}) => {
     return new Promise((resolve, reject) => {
         const query = `
             SELECT t.*, tv.name as tv_name, m.name as member_name, p.name as package_name
@@ -51,8 +51,14 @@ const getAllTransactions = () => {
             LEFT JOIN members m ON t.member_id = m.id
             LEFT JOIN packages p ON t.package_id = p.id
             ORDER BY t.created_at DESC
+            ${options.limit ? 'LIMIT ?' : ''}
         `;
-        db.all(query, [], (err, rows) => {
+        const params = [];
+        if (options.limit) {
+            params.push(options.limit);
+        }
+
+        db.all(query, params, (err, rows) => {
             if (err) {
                 return reject(err);
             }
