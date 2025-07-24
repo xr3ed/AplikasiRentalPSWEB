@@ -1,4 +1,5 @@
 const transactionService = require('../services/transactionService');
+const db = require('../database').getInstance();
 
 /**
  * @desc    Get all transactions
@@ -10,6 +11,9 @@ const getAllTransactions = async (req, res) => {
         const options = {};
         if (req.query.limit) {
             options.limit = parseInt(req.query.limit, 10);
+        }
+        if (req.query.member_id) {
+            options.member_id = parseInt(req.query.member_id, 10);
         }
         const transactions = await transactionService.getAllTransactions(options);
         res.json({ success: true, data: transactions });

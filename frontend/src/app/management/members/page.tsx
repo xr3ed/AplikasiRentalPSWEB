@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 interface Member {
     id: number;
@@ -16,11 +17,13 @@ export default function MemberManagementPage() {
     const [newName, setNewName] = useState('');
     const [newPhoneNumber, setNewPhoneNumber] = useState('');
     const [editingMember, setEditingMember] = useState<Member | null>(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [memberToDelete, setMemberToDelete] = useState<number | null>(null);
 
     const fetchMembers = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/members', {
+                        const res = await fetch('http://localhost:3001/api/members', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },
@@ -30,10 +33,10 @@ export default function MemberManagementPage() {
                 const result = await res.json();
                 setMembers(result.data);
             } else {
-                setError('Failed to fetch members');
+                                setError('Gagal mengambil data anggota');
             }
-        } catch (err) {
-            setError('An error occurred');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan');
         } finally {
             setLoading(false);
         }
@@ -47,7 +50,7 @@ export default function MemberManagementPage() {
         e.preventDefault();
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/members', {
+                        const res = await fetch('http://localhost:3001/api/members', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -63,10 +66,10 @@ export default function MemberManagementPage() {
                 fetchMembers(); // Refresh the list
             } else {
                 const result = await res.json();
-                setError(result.message || 'Failed to create member');
+                                setError(result.message || 'Gagal membuat anggota');
             }
-        } catch (err) {
-            setError('An error occurred while creating member');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan saat membuat anggota');
         }
     };
 
@@ -76,7 +79,7 @@ export default function MemberManagementPage() {
 
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`/api/members/${editingMember.id}`,
+                        const res = await fetch(`http://localhost:3001/api/members/${editingMember.id}`,
                 {
                     method: 'PUT',
                     headers: {
@@ -91,33 +94,41 @@ export default function MemberManagementPage() {
                 fetchMembers(); // Refresh the list
             } else {
                 const result = await res.json();
-                setError(result.message || 'Failed to update member');
+                                setError(result.message || 'Gagal memperbarui anggota');
             }
-        } catch (err) {
-            setError('An error occurred while updating member');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan saat memperbarui anggota');
         }
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm('Are you sure you want to delete this member?')) {
-            try {
-                const token = localStorage.getItem('token');
-                const res = await fetch(`/api/members/${id}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                    },
-                });
+    const handleDelete = (id: number) => {
+        setMemberToDelete(id);
+        setShowDeleteConfirm(true);
+    };
 
-                if (res.ok) {
-                    fetchMembers(); // Refresh the list
-                } else {
-                    const result = await res.json();
-                setError(result.message || 'Failed to delete member');
-                }
-            } catch (err) {
-                setError('An error occurred while deleting member');
+    const confirmDelete = async () => {
+        if (!memberToDelete) return;
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`http://localhost:3001/api/members/${memberToDelete}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+
+            if (res.ok) {
+                fetchMembers(); // Refresh the list
+            } else {
+                const result = await res.json();
+                setError(result.message || 'Gagal menghapus anggota');
             }
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+            setError('Terjadi kesalahan saat menghapus anggota');
+        } finally {
+            setShowDeleteConfirm(false);
+            setMemberToDelete(null);
         }
     };
 
@@ -134,6 +145,30 @@ export default function MemberManagementPage() {
     if (error) return <p className="text-red-500">{error}</p>;
 
     return (
+        <>
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50">
+                    <div className="bg-gray-900 border border-gray-700 rounded-lg p-8 shadow-lg max-w-sm w-full">
+                        <h3 className="text-xl font-bold text-white mb-4">Konfirmasi Hapus</h3>
+                        <p className="text-gray-300 mb-6">Apakah Anda yakin ingin menghapus anggota ini?</p>
+                        <div className="flex justify-end gap-4">
+                            <button 
+                                onClick={() => setShowDeleteConfirm(false)} 
+                                className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+                            >
+                                Batal
+                            </button>
+                            <button 
+                                onClick={confirmDelete} 
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+                            >
+                                Hapus
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         <div className="p-6">
             <h1 className="text-3xl font-bold text-white mb-8">Manajemen Member</h1>
 
@@ -236,29 +271,35 @@ export default function MemberManagementPage() {
                     </thead>
                     <tbody className="text-white text-sm font-light">
                         {members.map(member => (
-                            <tr key={member.id} className="border-b border-gray-800 hover:bg-gray-900">
-                                <td className="py-3 px-6 text-left whitespace-nowrap">{member.id}</td>
-                                <td className="py-3 px-6 text-left">{member.name}</td>
-                                <td className="py-3 px-6 text-left">{member.phone_number}</td>
-                                <td className="py-3 px-6 text-center">
-                                    <div className="flex item-center justify-center space-x-4">
-                                        <button onClick={() => startEdit(member)} className="text-gray-400 hover:text-red-500">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.536L16.732 3.732z" />
-                                            </svg>
-                                        </button>
-                                        <button onClick={() => handleDelete(member.id)} className="text-gray-400 hover:text-red-500">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
+                            <tr key={member.id}>
+                                 <td className="p-4 border-b border-gray-800 text-white">{member.id}</td>
+                                 <td className="p-4 border-b border-gray-800 text-white">{member.name}</td>
+                                 <td className="p-4 border-b border-gray-800 text-white">{member.phone_number}</td>
+                                 <td className="p-4 border-b border-gray-800 text-white">
+                                     <Link href={`/management/members/${member.id}`}>
+                                         <button className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded mr-2">
+                                             Lihat Detail
+                                         </button>
+                                     </Link>
+                                     <button 
+                                         onClick={() => startEdit(member)}
+                                         className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded mr-2"
+                                     >
+                                         Edit
+                                     </button>
+                                     <button 
+                                         onClick={() => handleDelete(member.id)}
+                                         className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded"
+                                     >
+                                         Hapus
+                                     </button>
+                                 </td>
+                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
         </div>
+        </>
     );
 }

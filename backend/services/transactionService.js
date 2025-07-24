@@ -40,20 +40,32 @@ const createTransaction = (transactionData) => {
 
 /**
  * Mengambil semua transaksi dengan opsi filter dan paginasi.
+ * @param {object} options - Opsi filter dan paginasi
+ * @param {number} options.limit - Batas jumlah data yang diambil
+ * @param {number} options.member_id - Filter berdasarkan member ID
  * @returns {Promise<object[]>}
  */
 const getAllTransactions = (options = {}) => {
     return new Promise((resolve, reject) => {
+        let whereClause = '';
+        const params = [];
+
+        if (options.member_id) {
+            whereClause = 'WHERE t.member_id = ?';
+            params.push(options.member_id);
+        }
+
         const query = `
             SELECT t.*, tv.name as tv_name, m.name as member_name, p.name as package_name
             FROM transactions t
             LEFT JOIN tvs tv ON t.tv_id = tv.id
             LEFT JOIN members m ON t.member_id = m.id
             LEFT JOIN packages p ON t.package_id = p.id
+            ${whereClause}
             ORDER BY t.created_at DESC
             ${options.limit ? 'LIMIT ?' : ''}
         `;
-        const params = [];
+
         if (options.limit) {
             params.push(options.limit);
         }

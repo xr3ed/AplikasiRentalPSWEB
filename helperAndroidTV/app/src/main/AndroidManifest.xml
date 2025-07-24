@@ -36,12 +36,26 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ErrorActivity"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- TV ID Configuration Receiver -->
+        <receiver
+            android:name=".TvIdReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.helperandroidtv.SET_TV_ID" />
             </intent-filter>
         </receiver>
     </application>

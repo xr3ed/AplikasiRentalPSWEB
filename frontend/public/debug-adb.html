@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADB Debug Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            background-color: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #333;
+            color: #fff;
+        }
+        button {
+            background-color: #007bff;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .log {
+            background-color: #000;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #555;
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .warning { color: #ffc107; }
+        .info { color: #17a2b8; }
+    </style>
+</head>
+<body>
+    <h1>🔍 ADB Debug Tool</h1>
+    
+    <div class="container">
+        <h2>📱 Test ADB Connection</h2>
+        <input type="text" id="tvIp" placeholder="Enter TV IP (e.g., 192.168.1.18)" value="192.168.1.18">
+        <button onclick="testADBConnection()">🔍 Test Connection</button>
+        <button onclick="clearLog()">🧹 Clear Log</button>
+    </div>
+
+    <div class="container">
+        <h2>🛠️ Quick Fixes</h2>
+        <button onclick="checkToken()">🔑 Check Token</button>
+        <button onclick="testBackendConnectivity()">🌐 Test Backend</button>
+        <button onclick="restartADB()">🔄 Restart ADB</button>
+        <button onclick="resetLocalStorage()">💾 Reset Storage</button>
+    </div>
+
+    <div class="container">
+        <h2>📋 Debug Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type;
+            logElement.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        async function testADBConnection() {
+            const ip = document.getElementById('tvIp').value;
+            if (!ip) {
+                log('❌ Please enter TV IP address', 'error');
+                return;
+            }
+
+            log(`🎯 Testing ADB connection to ${ip}...`, 'info');
+            
+            try {
+                const token = localStorage.getItem('token') || 'test';
+                log(`🔑 Using token: ${token ? 'Present' : 'Missing'}`, 'info');
+                
+                const startTime = Date.now();
+                const response = await fetch(`http://localhost:3001/api/tvs/adb-status/${ip}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const duration = Date.now() - startTime;
+                log(`📊 Response received in ${duration}ms`, 'info');
+                log(`📊 Status: ${response.status} ${response.statusText}`, response.ok ? 'success' : 'error');
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`❌ Error response: ${errorText}`, 'error');
+                    return;
+                }
+                
+                const data = await response.json();
+                log(`✅ Response data:`, 'success');
+                log(JSON.stringify(data, null, 2), 'info');
+                
+                // Analyze response
+                if (data.success) {
+                    if (data.status.authorized) {
+                        log(`🎉 SUCCESS: TV is authorized and ready!`, 'success');
+                    } else if (data.status.connected) {
+                        log(`⏳ TV connected but not authorized. Check TV screen for dialog.`, 'warning');
+                    } else {
+                        log(`❌ TV not connected. Check IP and network.`, 'error');
+                    }
+                } else {
+                    log(`❌ API call failed: ${data.message || 'Unknown error'}`, 'error');
+                }
+                
+            } catch (error) {
+                log(`❌ Network error: ${error.message}`, 'error');
+                log(`💡 Make sure backend server is running on port 3001`, 'warning');
+            }
+        }
+
+        async function checkToken() {
+            log('🔑 Checking authentication token...', 'info');
+            
+            const token = localStorage.getItem('token');
+            if (token) {
+                log(`✅ Token found: ${token}`, 'success');
+            } else {
+                log(`❌ No token found. Setting default token...`, 'warning');
+                localStorage.setItem('token', 'test');
+                log(`✅ Default token set: test`, 'success');
+            }
+        }
+
+        async function testBackendConnectivity() {
+            log('🌐 Testing backend connectivity...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:3001/api/tvs/adb-system/status', {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token') || 'test'}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('✅ Backend connectivity OK', 'success');
+                    log(`📊 ADB System Status: ${JSON.stringify(data.adbStatus, null, 2)}`, 'info');
+                } else {
+                    log(`❌ Backend error: ${response.status} ${response.statusText}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Cannot connect to backend: ${error.message}`, 'error');
+                log(`💡 Make sure backend server is running: npm start`, 'warning');
+            }
+        }
+
+        async function restartADB() {
+            log('🔄 Restarting ADB system...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:3001/api/tvs/adb-system/restart', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token') || 'test'}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ ADB system restarted successfully', 'success');
+                } else {
+                    log(`❌ Failed to restart ADB: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error restarting ADB: ${error.message}`, 'error');
+            }
+        }
+
+        function resetLocalStorage() {
+            log('💾 Resetting local storage...', 'info');
+            
+            const keys = Object.keys(localStorage);
+            log(`📋 Found ${keys.length} items in storage: ${keys.join(', ')}`, 'info');
+            
+            localStorage.clear();
+            localStorage.setItem('token', 'test');
+            
+            log('✅ Local storage cleared and token reset', 'success');
+            log('💡 Refresh the main application page to apply changes', 'warning');
+        }
+
+        // Initialize
+        window.onload = function() {
+            log('🔍 ADB Debug Tool initialized', 'success');
+            log('💡 Use this tool to diagnose ADB connection issues', 'info');
+            checkToken();
+        };
+    </script>
+</body>
+</html>

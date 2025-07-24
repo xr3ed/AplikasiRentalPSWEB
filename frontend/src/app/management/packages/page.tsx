@@ -22,7 +22,7 @@ export default function PackageManagementPage() {
     const fetchPackages = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/packages', {
+                        const res = await fetch('http://localhost:3001/api/packages', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },
@@ -32,10 +32,10 @@ export default function PackageManagementPage() {
                 const result = await res.json();
                 setPackages(result.data);
             } else {
-                setError('Failed to fetch packages');
+                                setError('Gagal mengambil data paket');
             }
-        } catch (err) {
-            setError('An error occurred');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan');
         } finally {
             setLoading(false);
         }
@@ -49,7 +49,7 @@ export default function PackageManagementPage() {
         e.preventDefault();
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/packages', {
+                        const res = await fetch('http://localhost:3001/api/packages', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -66,10 +66,10 @@ export default function PackageManagementPage() {
                 fetchPackages(); // Refresh the list
             } else {
                 const result = await res.json();
-                setError(result.message || 'Failed to create package');
+                                setError(result.message || 'Gagal membuat paket');
             }
-        } catch (err) {
-            setError('An error occurred while creating package');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan saat membuat paket');
         }
     };
 
@@ -79,7 +79,7 @@ export default function PackageManagementPage() {
 
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`/api/packages/${editingPackage.id}`,
+                        const res = await fetch(`http://localhost:3001/api/packages/${editingPackage.id}`,
                 {
                     method: 'PUT',
                     headers: {
@@ -98,18 +98,18 @@ export default function PackageManagementPage() {
                 fetchPackages(); // Refresh the list
             } else {
                 const result = await res.json();
-                setError(result.message || 'Failed to update package');
+                                setError(result.message || 'Gagal memperbarui paket');
             }
-        } catch (err) {
-            setError('An error occurred while updating package');
+        } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                        setError('Terjadi kesalahan saat memperbarui paket');
         }
     };
 
     const handleDelete = async (id: number) => {
-        if (window.confirm('Are you sure you want to delete this package?')) {
+                if (window.confirm('Apakah Anda yakin ingin menghapus paket ini?')) {
             try {
                 const token = localStorage.getItem('token');
-                const res = await fetch(`/api/packages/${id}`, {
+                                const res = await fetch(`http://localhost:3001/api/packages/${id}`, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -120,10 +120,10 @@ export default function PackageManagementPage() {
                     fetchPackages(); // Refresh the list
                 } else {
                     const result = await res.json();
-                setError(result.message || 'Failed to delete package');
+                                setError(result.message || 'Gagal menghapus paket');
                 }
-            } catch (err) {
-                setError('An error occurred while deleting package');
+            } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                                setError('Terjadi kesalahan saat menghapus paket');
             }
         }
     };
@@ -137,7 +137,7 @@ export default function PackageManagementPage() {
     };
 
 
-    if (loading) return <p className="text-white">Loading...</p>;
+        if (loading) return <p className="text-white">Memuat...</p>;
     if (error) return <p className="text-red-500">{error}</p>;
 
     return (

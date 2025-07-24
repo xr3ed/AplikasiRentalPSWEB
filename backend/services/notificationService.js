@@ -14,7 +14,6 @@ async function sendWhatsAppMessage(phoneNumber, message) {
     try {
         if (whatsappClient.info) { // Pastikan client sudah siap
             await whatsappClient.sendMessage(phoneNumber, message);
-            console.log(`Notification sent to ${phoneNumber}`);
         }
     } catch (error) {
         console.error(`Failed to send WhatsApp message to ${phoneNumber}:`, error);
@@ -69,10 +68,9 @@ async function checkAndNotifyExpiringSessions() {
  * Memulai cron job untuk memeriksa sesi yang akan berakhir secara berkala.
  */
 function startNotificationService() {
-    console.log('Notification service started. Checking for expiring sessions every minute.');
+    console.log('Notification service started.');
     // Jalankan setiap menit
     cron.schedule('* * * * *', () => {
-        console.log('Running scheduled check for expiring sessions...');
         checkAndNotifyExpiringSessions();
     });
 }

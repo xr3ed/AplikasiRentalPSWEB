@@ -27,7 +27,28 @@
         android:id="@+id/member_qr_code"
         android:layout_width="250dp"
         android:layout_height="250dp"
-        android:layout_marginTop="20dp" />
+        android:layout_marginTop="20dp"
+        android:visibility="visible" />
+
+    <TextView
+        android:id="@+id/login_code_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="48sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/login_instruction_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="8dp"
+        android:textColor="#CCCCCC"
+        android:textSize="18sp"
+        android:visibility="gone" />
 
     <TextView
         android:layout_width="wrap_content"
@@ -35,5 +56,7 @@
         android:text="Scan untuk Login Member"
         android:textSize="18sp"
         android:textColor="#FFFFFF" />
+
+
 
 </LinearLayout>

@@ -24,16 +24,20 @@ const TransactionsPage = () => {
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const res = await fetch('/api/transactions');
+                const res = await fetch('http://localhost:3001/api/transactions');
 
         if (!res.ok) {
-          throw new Error('Failed to fetch transactions');
+                    throw new Error('Gagal mengambil data transaksi');
         }
 
         const data = await res.json();
         setTransactions(data.data);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+                    setError('Terjadi kesalahan yang tidak diketahui');
+        }
       } finally {
         setLoading(false);
       }

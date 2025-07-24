@@ -1,4 +1,5 @@
 const packageService = require('../services/packageService');
+const db = require('../database').getInstance();
 
 exports.getAllPackages = async (req, res, next) => {
     try {

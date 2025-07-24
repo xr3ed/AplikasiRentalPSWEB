@@ -13,4 +13,13 @@ router.get('/', memberController.getAllMembers);
 // POST /api/members
 router.post('/', validateMember, memberController.createMember);
 
+// GET /api/members/:id
+router.get('/:id', memberController.getMemberById);
+
+// PUT /api/members/:id
+router.put('/:id', validateMember, memberController.updateMember);
+
+// DELETE /api/members/:id
+router.delete('/:id', memberController.deleteMember);
+
 module.exports = router;

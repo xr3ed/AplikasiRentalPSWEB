@@ -8,7 +8,7 @@ exports.getSummaryData = async () => {
     try {
         const [totalTvsRow, activeTvsRow, totalMembersRow, totalPackagesRow] = await Promise.all([
             dbGet("SELECT COUNT(*) as count FROM tvs"),
-            dbGet("SELECT COUNT(*) as count FROM tvs WHERE status = 'active'"),
+            dbGet("SELECT COUNT(*) as count FROM tvs WHERE status = 'on'"),
             dbGet("SELECT COUNT(*) as count FROM members"),
             dbGet("SELECT COUNT(*) as count FROM packages"),
         ]);

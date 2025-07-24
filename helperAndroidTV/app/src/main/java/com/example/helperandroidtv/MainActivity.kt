@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -21,12 +22,18 @@ import kotlinx.coroutines.isActive
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.provider.Settings
 import android.net.Uri
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.socket.client.IO
+import io.socket.client.Socket
+import io.socket.emitter.Emitter
+import java.net.URISyntaxException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -40,7 +47,6 @@ import android.widget.FrameLayout
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var qrCodeImageView: ImageView
     private lateinit var statusTextView: TextView
     private lateinit var mainLayout: LinearLayout
     private lateinit var manualIpLayout: LinearLayout
@@ -50,6 +56,16 @@ class MainActivity : AppCompatActivity() {
     private val client = OkHttpClient()
     private var tvId: Int? = null
     private var pollingJob: Job? = null
+    private var currentLoginCode: String? = null
+    private var lastSessionStatus: String? = null
+
+    // Socket.IO variables
+    private var socket: Socket? = null
+    private var useSocketIO: Boolean = true // Flag to enable/disable Socket.IO
+
+    // Heartbeat variables for monitoring
+    private var heartbeatJob: Job? = null
+    private val heartbeatIntervalMs = 30000L // 30 seconds
 
 
 
@@ -58,12 +74,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sharedPreferences: SharedPreferences
     private var isPaired: Boolean = false
 
+    // TV ID Broadcast Receiver
+    private var tvIdReceiver: BroadcastReceiver? = null
+    private var tvIdConfiguredReceiver: BroadcastReceiver? = null
+
     companion object {
         private const val OVERLAY_PERMISSION_REQUEST_CODE = 1234
+        private const val TV_ID_BROADCAST_ACTION = "com.example.helperandroidtv.SET_TV_ID"
+        private const val TV_ID_CONFIGURED_ACTION = "com.example.helperandroidtv.TV_ID_CONFIGURED"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Set up global error handler
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(this, defaultHandler!!))
 
         if (Settings.canDrawOverlays(this)) {
             // Izin sudah diberikan, lanjutkan dengan inisialisasi
@@ -81,7 +107,6 @@ class MainActivity : AppCompatActivity() {
     private fun initializeView() {
         setContentView(R.layout.activity_main)
 
-        qrCodeImageView = findViewById(R.id.qr_code_image_view)
         statusTextView = findViewById(R.id.status_text_view)
         mainLayout = findViewById(R.id.main_layout)
         manualIpLayout = findViewById(R.id.manual_ip_layout)
@@ -100,11 +125,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Register broadcast receiver for TV ID configuration
+        registerTvIdReceiver()
+
         val lastKnownIp = sharedPreferences.getString("lastServerIp", null)
         if (tvId != null && lastKnownIp != null) {
             serverBaseUrl = "http://$lastKnownIp:3001"
             checkTvStatus(tvId!!)
         } else {
+            // Check if we're waiting for TV ID configuration
+            if (tvId == null) {
+                statusTextView.text = "Menunggu konfigurasi TV ID dari server..."
+                Log.i("MainActivity", "🆔 Waiting for TV ID configuration via broadcast")
+            }
             startNetworkScan(manualIp = lastKnownIp)
         }
     }
@@ -130,29 +163,114 @@ class MainActivity : AppCompatActivity() {
                     if (response.isSuccessful) {
                         val json = JSONObject(response.body!!.string())
                         val status = json.getString("status")
+                        val tvName = json.getString("name")
+                        val actualTvId = json.getInt("id")
+
+                        // Update tvId to match server
+                        tvId = actualTvId
+                        sharedPreferences.edit().putInt("tvId", actualTvId).apply()
+
                         withContext(Dispatchers.Main) {
-                            if (status == "inactive") {
-                                showHomeScreen(json.getString("name"))
-                            } else {
-                                startPairingProcess()
-                            }
+                            // Always show home screen, no pairing needed
+                            showHomeScreen(tvName, actualTvId)
                         }
                     } else {
                         withContext(Dispatchers.Main) {
-                            startPairingProcess()
+                            // TV not found on server, clear stored TV ID and show error
+                            tvId = null
+                            sharedPreferences.edit().remove("tvId").apply()
+                            showTvNotConfiguredScreen()
                         }
                     }
                 }
             } catch (e: Exception) {
+                Log.e("TV_STATUS_CHECK", "Error checking TV status", e)
                 withContext(Dispatchers.Main) {
-                    // Handle error, maybe show pairing screen
-                    startPairingProcess()
+                    // Handle error, show configuration needed screen
+                    showTvNotConfiguredScreen()
                 }
             }
         }
     }
 
-    private fun showHomeScreen(tvName: String) {
+    private fun checkTvConfiguration() {
+        // Check if TV ID is already saved
+        if (tvId != null && tvId != -1) {
+            // TV is configured, check status on server
+            checkTvStatus(tvId!!)
+        } else {
+            // TV not configured, try to find by IP address
+            findTvByIpAddress()
+        }
+    }
+
+    private fun findTvByIpAddress() {
+        val localIp = getLocalIpAddress()
+        if (localIp == null) {
+            showTvNotConfiguredScreen()
+            return
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$serverBaseUrl/api/tvs").get().build()
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.body!!.string())
+                        val tvsArray = json.getJSONArray("data")
+
+                        // Look for TV with matching IP
+                        for (i in 0 until tvsArray.length()) {
+                            val tvObj = tvsArray.getJSONObject(i)
+                            val tvIpAddress = tvObj.getString("ip_address")
+
+                            // Clean up IP addresses for comparison
+                            val cleanLocalIp = localIp.replace("::ffff:", "")
+                            val cleanTvIp = tvIpAddress.replace("::ffff:", "")
+
+                            if (cleanLocalIp == cleanTvIp) {
+                                // Found matching TV, save ID and show home screen
+                                val foundTvId = tvObj.getInt("id")
+                                val foundTvName = tvObj.getString("name")
+
+                                tvId = foundTvId
+                                sharedPreferences.edit().putInt("tvId", foundTvId).apply()
+
+                                withContext(Dispatchers.Main) {
+                                    showHomeScreen(foundTvName, foundTvId)
+                                }
+                                return@launch
+                            }
+                        }
+
+                        // No matching TV found
+                        withContext(Dispatchers.Main) {
+                            showTvNotConfiguredScreen()
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            showTvNotConfiguredScreen()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("TV_IP_SEARCH", "Error finding TV by IP", e)
+                withContext(Dispatchers.Main) {
+                    showTvNotConfiguredScreen()
+                }
+            }
+        }
+    }
+
+    private fun showTvNotConfiguredScreen() {
+        statusTextView.text = "TV belum dikonfigurasi.\n\nSilakan hubungi administrator untuk mengatur TV ini melalui ADB atau tambahkan TV secara manual di dashboard."
+        mainLayout.visibility = View.VISIBLE
+
+        // Hide manual IP layout since this is a configuration issue
+        manualIpLayout.visibility = View.GONE
+    }
+
+    private fun showHomeScreen(tvName: String, tvIdParam: Int) {
         setContentView(R.layout.activity_homescreen)
         val welcomeText = findViewById<TextView>(R.id.welcome_text)
         val tvNameText = findViewById<TextView>(R.id.tv_name_text)
@@ -160,19 +278,20 @@ class MainActivity : AppCompatActivity() {
 
         tvNameText.text = tvName
 
-        startSessionPolling(tvId!!)
+        // Initialize session status tracking
+        lastSessionStatus = "inactive"
 
-        // Generate QR Code for member login
+        // Use Socket.IO for real-time communication, fallback to HTTP polling
+        connectSocketIO(tvIdParam)
+
         lifecycleScope.launch {
-            try {
-                val memberLoginUrl = "$serverBaseUrl/members/login?tvId=$tvId"
-                val bitmap = generateQrCode(memberLoginUrl)
-                memberQrCode.setImageBitmap(bitmap)
-            } catch (e: Exception) {
-                Log.e("QR_CODE", "Failed to generate member login QR code", e)
-            }
+            fetchAndDisplayLoginCode(tvIdParam)
         }
     }
+
+
+
+
 
     private fun discoverServerWithUdp(timeout: Long = 5000): String? {
         var serverUrl: String? = null
@@ -220,7 +339,8 @@ class MainActivity : AppCompatActivity() {
                 sharedPreferences.edit().putString("lastServerIp", discoveredIp).apply()
                 withContext(Dispatchers.Main) {
                     statusTextView.text = "Server ditemukan via UDP di $serverBaseUrl!"
-                    startPairingProcess()
+                    // Check if TV is already configured
+                    checkTvConfiguration()
                 }
                 networkScanJob?.cancel()
                 return@launch
@@ -241,7 +361,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putString("lastServerIp", manualIp).apply()
                             withContext(Dispatchers.Main) {
                                 statusTextView.text = "Server ditemukan di $serverBaseUrl!"
-                                startPairingProcess()
+                                checkTvConfiguration()
                             }
                             networkScanJob?.cancel()
                             return@launch
@@ -295,7 +415,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putString("lastServerIp", host).apply()
                             withContext(Dispatchers.Main) {
                                 statusTextView.text = "Server ditemukan di $serverBaseUrl!"
-                                startPairingProcess()
+                                checkTvConfiguration()
                             }
                             networkScanJob?.cancel()
                             return@use
@@ -321,6 +441,7 @@ class MainActivity : AppCompatActivity() {
             val ipAddress = wifiManager.connectionInfo.ipAddress
             if (ipAddress == 0) return null
             return String.format(
+                java.util.Locale.ROOT,
                 "%d.%d.%d.%d",
                 ipAddress and 0xff,
                 ipAddress shr 8 and 0xff,
@@ -333,111 +454,355 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    override fun onPause() {
-        super.onPause()
-        networkScanJob?.cancel()
-    }
 
-    override fun onResume() {
-        super.onResume()
-        if (serverBaseUrl == null) {
-            startNetworkScan()
+
+
+
+
+
+
+
+        private fun fetchAndDisplayLoginCode(tvId: Int) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$serverBaseUrl/api/tvs/$tvId/generate-login-code").post("".toRequestBody()).build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.body!!.string())
+                        val loginCode = json.getString("code")
+                        val whatsappPhoneNumber = json.getString("whatsAppNumber")
+                        val whatsappMessage = "$loginCode - Jangan ubah pesan ini"
+                        val whatsappUrl = "https://wa.me/$whatsappPhoneNumber?text=${Uri.encode(whatsappMessage)}"
+
+                        // Store current login code
+                        currentLoginCode = loginCode
+
+                        val qrCodeBitmap = generateQrCode(whatsappUrl)
+
+                        withContext(Dispatchers.Main) {
+                            val memberQrCodeImageView = findViewById<ImageView>(R.id.member_qr_code)
+                            memberQrCodeImageView.setImageBitmap(qrCodeBitmap)
+                            memberQrCodeImageView.visibility = View.VISIBLE
+
+                            // Sembunyikan atau hapus tampilan teks jika tidak diperlukan lagi
+                            findViewById<TextView>(R.id.login_code_text).visibility = View.GONE
+                            findViewById<TextView>(R.id.login_instruction_text).visibility = View.GONE
+                        }
+
+
+                    } else {
+                        Log.e("MainActivity", "Failed to generate login code: ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error generating login code", e)
+            }
         }
     }
 
-    private fun startPairingProcess() {
-        if (serverBaseUrl == null) {
-            statusTextView.text = "Server belum ditemukan. Pastikan server berjalan dan berada di jaringan yang sama."
+
+
+
+
+
+
+
+
+    private fun connectSocketIO(tvId: Int) {
+        if (!useSocketIO || serverBaseUrl == null) {
+            Log.w("MainActivity", "Socket.IO disabled or no server URL, falling back to HTTP polling")
+            startSessionPolling(tvId)
             return
         }
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val emptyJson = "{}"
-                val body = emptyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
-                val request = Request.Builder()
-                    .url("$serverBaseUrl/api/tvs")
-                    .post(body)
-                    .build()
+        try {
+            val uri = serverBaseUrl!!.replace("http://", "").replace("https://", "")
+            val socketUrl = "http://$uri"
 
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val errorBody = response.body?.string() ?: "No response body"
-                        throw Exception("Failed to create TV: ${response.code} ${response.message}\n$errorBody")
+            Log.i("MainActivity", "Connecting to Socket.IO server: $socketUrl")
+
+            socket = IO.socket(socketUrl)
+
+            socket?.on(Socket.EVENT_CONNECT) {
+                Log.i("MainActivity", "Socket.IO connected successfully")
+
+                // Send immediate connect event for instant status update
+                sendImmediateConnectEvent(tvId)
+
+                // Start regular heartbeat
+                startHeartbeat(tvId)
+            }
+
+            socket?.on(Socket.EVENT_DISCONNECT) {
+                Log.w("MainActivity", "Socket.IO disconnected")
+                // Stop heartbeat when Socket.IO disconnects
+                stopHeartbeat()
+            }
+
+            socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                Log.e("MainActivity", "Socket.IO connection error: ${args.contentToString()}")
+                // Fallback to HTTP polling on connection error
+                Log.i("MainActivity", "Falling back to HTTP polling")
+                startSessionPolling(tvId)
+            }
+
+            // Listen for TV-specific status events
+            socket?.on("tv_status_$tvId") { args ->
+                if (args.isNotEmpty()) {
+                    try {
+                        val data = args[0] as JSONObject
+                        val type = data.getString("type")
+                        val status = data.optString("status", "")  // Optional field with empty string default
+
+                        Log.i("MainActivity", "Received Socket.IO event: $type" + if (status.isNotEmpty()) ", status: $status" else "")
+
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            when (type) {
+                                "session_started" -> {
+                                    if (status.isNotEmpty()) {  // Add status check
+                                        lastSessionStatus = status
+                                        // Move app to background when session starts
+                                        moveTaskToBack(true)
+                                    }
+                                }
+                                "session_ended" -> {
+                                    if (status.isNotEmpty()) {  // Add status check
+                                        lastSessionStatus = status
+                                        // Generate new QR code when session ends
+                                        Log.i("MainActivity", "🎯 SESSION END DETECTED via Socket.IO! Generating new QR code")
+                                        generateNewQrCodeAfterSession(tvId)
+
+                                        // Bring app to front when session ends
+                                        val intent = Intent(this@MainActivity, MainActivity::class.java)
+                                        intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                                        startActivity(intent)
+                                    }
+                                }
+                                "login_code_expired" -> {
+                                    // Automatic QR refresh when login code expires (no status field needed)
+                                    val expiredCode = data.optString("expiredCode", "")
+                                    Log.i("MainActivity", "🔄 LOGIN CODE EXPIRED via Socket.IO! Code: $expiredCode - Auto-refreshing QR")
+                                    generateNewQrCodeAfterSession(tvId)
+
+                                    // Show user notification about automatic refresh
+                                    showQrRefreshNotification("Auto-refreshed (expired)")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error processing Socket.IO event", e)
                     }
-
-                    val responseData = response.body?.string()
-                    if (responseData == null) {
-                        throw Exception("Received empty response from server")
-                    }
-
-                    val jsonObject = JSONObject(responseData)
-                    tvId = jsonObject.getInt("id")
-
-                    // Now, fetch the QR code for the newly created TV
-                    fetchAndDisplayQRCode(tvId!!)
-                    startPollingForPairingStatus(tvId!!)
-                }
-            } catch (e: Exception) {
-                Log.e("PAIRING_ERROR", "Error creating TV", e)
-                withContext(Dispatchers.Main) {
-                    statusTextView.text = "Gagal memulai proses pairing: ${e.message}"
                 }
             }
+
+            socket?.connect()
+
+        } catch (e: URISyntaxException) {
+            Log.e("MainActivity", "Invalid Socket.IO URI", e)
+            // Fallback to HTTP polling
+            startSessionPolling(tvId)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Socket.IO setup error", e)
+            // Fallback to HTTP polling
+            startSessionPolling(tvId)
         }
     }
 
-    private fun fetchAndDisplayQRCode(tvId: Int) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("$serverBaseUrl/api/tvs/$tvId/qrcode")
-                    .get()
-                    .build()
+    private fun disconnectSocketIO() {
+        socket?.disconnect()
+        socket?.off()
+        socket = null
+        stopHeartbeat()
+        Log.i("MainActivity", "Socket.IO disconnected and cleaned up")
+    }
 
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw Exception("Failed to fetch QR code: ${response.code}")
-                    }
-                    val responseData = response.body?.string() ?: throw Exception("Empty QR code response")
-                    val jsonObject = JSONObject(responseData)
-                    val qrCodeData = jsonObject.getString("qrCode")
+    /**
+     * Start sending heartbeat signals to server for monitoring
+     */
+    private fun startHeartbeat(tvId: Int) {
+        // Stop existing heartbeat if running
+        stopHeartbeat()
 
-                    withContext(Dispatchers.Main) {
-                        statusTextView.text = "TV berhasil dibuat. Memuat QR Code..."
-                        displayQrCodeFromBase64(qrCodeData)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("QR_CODE_ERROR", "Error fetching QR code", e)
-                withContext(Dispatchers.Main) {
-                    statusTextView.text = "Gagal memuat QR code: ${e.message}"
+        heartbeatJob = lifecycleScope.launch {
+            while (isActive) {
+                try {
+                    sendHeartbeat(tvId)
+                    delay(heartbeatIntervalMs)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error in heartbeat loop: ${e.message}")
+                    // Continue the loop even if one heartbeat fails
+                    delay(heartbeatIntervalMs)
                 }
             }
         }
+
+        Log.i("MainActivity", "Heartbeat started for TV $tvId (interval: ${heartbeatIntervalMs/1000}s)")
     }
 
-    private fun displayQrCodeFromBase64(qrCodeBase64: String) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                // Asumsi qrCodeUrl adalah data URL base64
-                val imageBytes = android.util.Base64.decode(qrCodeBase64.substringAfter(","), android.util.Base64.DEFAULT)
-                val decodedImage = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    /**
+     * Stop heartbeat signals
+     */
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        Log.i("MainActivity", "Heartbeat stopped")
+    }
 
-                withContext(Dispatchers.Main) {
-                    qrCodeImageView.setImageBitmap(decodedImage)
-                    statusTextView.text = "Pindai QR code ini untuk memasangkan TV."
+    /**
+     * Send immediate connect event for instant status update
+     */
+    private fun sendImmediateConnectEvent(tvId: Int) {
+        try {
+            if (socket?.connected() == true) {
+                val connectData = JSONObject().apply {
+                    put("tvId", tvId)
+                    put("timestamp", System.currentTimeMillis())
+                    put("appVersion", BuildConfig.VERSION_NAME)
+                    put("deviceInfo", JSONObject().apply {
+                        put("model", android.os.Build.MODEL)
+                        put("manufacturer", android.os.Build.MANUFACTURER)
+                        put("androidVersion", android.os.Build.VERSION.RELEASE)
+                    })
                 }
-            } catch (e: Exception) {
-                Log.e("QR_CODE_ERROR", "Error displaying QR code from URL", e)
-                withContext(Dispatchers.Main) {
-                    statusTextView.text = "Gagal menampilkan QR code."
+
+                socket?.emit("tv-connect", connectData)
+                Log.i("MainActivity", "🚀 Immediate connect event sent for TV $tvId")
+
+                // Listen for confirmation
+                socket?.on("tv-connect-confirmed") { args ->
+                    if (args.isNotEmpty()) {
+                        try {
+                            val data = args[0] as JSONObject
+                            val confirmedTvId = data.getInt("tvId")
+                            if (confirmedTvId == tvId) {
+                                Log.i("MainActivity", "✅ Connect confirmation received for TV $tvId")
+                                runOnUiThread {
+                                    // Update UI to show connected status immediately
+                                    updateConnectionStatus("Connected - Active")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Error parsing connect confirmation: ${e.message}")
+                        }
+                    }
+                }
+
+                // Listen for connection errors
+                socket?.on("tv-connect-error") { args ->
+                    if (args.isNotEmpty()) {
+                        try {
+                            val data = args[0] as JSONObject
+                            val errorTvId = data.getInt("tvId")
+                            if (errorTvId == tvId) {
+                                val error = data.getString("error")
+                                Log.e("MainActivity", "❌ Connect error for TV $tvId: $error")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Error parsing connect error: ${e.message}")
+                        }
+                    }
+                }
+
+                // Listen for auto-update events
+                socket?.on("tv-update-event") { args ->
+                    if (args.isNotEmpty()) {
+                        try {
+                            val data = args[0] as JSONObject
+                            val updateTvId = data.getInt("tvId")
+                            if (updateTvId == tvId) {
+                                val eventType = data.getString("eventType")
+                                val message = data.optString("message", "")
+
+                                Log.i("MainActivity", "🔄 Update event: $eventType - $message")
+
+                                runOnUiThread {
+                                    when (eventType) {
+                                        "update-started" -> {
+                                            updateConnectionStatus("🔄 Auto-update starting...")
+                                        }
+                                        "update-progress" -> {
+                                            updateConnectionStatus("🔄 $message")
+                                        }
+                                        "update-completed" -> {
+                                            val newVersion = data.optString("newVersion", "")
+                                            updateConnectionStatus("✅ Updated to v$newVersion")
+
+                                            // App will be restarted by ADB, so this might not be visible
+                                            Log.i("MainActivity", "✅ Update completed, app may restart")
+                                        }
+                                        "update-failed" -> {
+                                            val error = data.optString("error", "Unknown error")
+                                            updateConnectionStatus("❌ Update failed: $error")
+                                            Log.e("MainActivity", "❌ Update failed: $error")
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Error parsing update event: ${e.message}")
+                        }
+                    }
                 }
             }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error sending immediate connect event: ${e.message}")
+        }
+    }
+
+    /**
+     * Send a single heartbeat signal to server
+     */
+    private fun sendHeartbeat(tvId: Int) {
+        try {
+            if (socket?.connected() == true) {
+                // Send heartbeat via Socket.IO
+                val heartbeatData = JSONObject().apply {
+                    put("tvId", tvId)
+                    put("timestamp", System.currentTimeMillis())
+                    put("status", "alive")
+                }
+
+                socket?.emit("tv-heartbeat", heartbeatData)
+                Log.d("MainActivity", "Heartbeat sent via Socket.IO for TV $tvId")
+
+            } else if (serverBaseUrl != null) {
+                // Fallback: Send heartbeat via HTTP
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val heartbeatData = JSONObject().apply {
+                            put("tvId", tvId)
+                            put("timestamp", System.currentTimeMillis())
+                            put("status", "alive")
+                        }
+
+                        val body = heartbeatData.toString().toRequestBody("application/json".toMediaType())
+                        val request = Request.Builder()
+                            .url("$serverBaseUrl/api/tvs/$tvId/heartbeat")
+                            .post(body)
+                            .build()
+
+                        client.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                Log.d("MainActivity", "Heartbeat sent via HTTP for TV $tvId")
+                            } else {
+                                Log.w("MainActivity", "Heartbeat HTTP request failed: ${response.code}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error sending HTTP heartbeat: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error sending heartbeat: ${e.message}")
         }
     }
 
     private fun startSessionPolling(id: Int) {
+        // Start heartbeat for HTTP polling mode
+        startHeartbeat(id)
+
         pollingJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 try {
@@ -446,8 +811,21 @@ class MainActivity : AppCompatActivity() {
                         if (response.isSuccessful) {
                             val json = JSONObject(response.body!!.string())
                             val status = json.getString("status")
+
+                            // Check for session end with BOTH 'inactive' and 'off' status
+                            val sessionEnded = lastSessionStatus != null && lastSessionStatus == "on" && (status == "inactive" || status == "off")
+
+                            if (sessionEnded) {
+                                // Session just ended, generate new QR code
+                                Log.i("MainActivity", "🎯 SESSION END DETECTED! (Status: '$status') Generating new QR code for TV $id")
+                                generateNewQrCodeAfterSession(id)
+                            }
+
+                            // Update last session status
+                            lastSessionStatus = status
+
                             withContext(Dispatchers.Main) {
-                                if (status == "active") {
+                                if (status == "on") {
                                     // Move the task to the background, simulating minimizing the app
                                     moveTaskToBack(true)
                                 } else {
@@ -457,14 +835,89 @@ class MainActivity : AppCompatActivity() {
                                     startActivity(intent)
                                 }
                             }
+                        } else {
+                            Log.w("MainActivity", "Polling request failed: ${response.code}")
                         }
                     }
                 } catch (e: Exception) {
                     Log.e("SESSION_POLL", "Error polling for session status", e)
                 }
+
                 delay(5000) // Poll every 5 seconds
             }
         }
+    }
+
+    private fun generateNewQrCodeAfterSession(tvId: Int) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Generate new login code
+                val request = Request.Builder()
+                    .url("$serverBaseUrl/api/tvs/$tvId/generate-login-code")
+                    .post("".toRequestBody())
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.body!!.string())
+                        val loginCode = json.getString("code")
+                        val whatsappPhoneNumber = json.getString("whatsAppNumber")
+                        val whatsappMessage = "$loginCode - Jangan ubah pesan ini"
+                        val whatsappUrl = "https://wa.me/$whatsappPhoneNumber?text=${Uri.encode(whatsappMessage)}"
+
+                        // Store current login code
+                        currentLoginCode = loginCode
+
+                        val qrCodeBitmap = generateQrCode(whatsappUrl)
+
+                        withContext(Dispatchers.Main) {
+                            val memberQrCodeImageView = findViewById<ImageView>(R.id.member_qr_code)
+                            memberQrCodeImageView.setImageBitmap(qrCodeBitmap)
+
+                            // Show visual notification of QR refresh
+                            showQrRefreshNotification(loginCode)
+
+                            Log.i("MainActivity", "QR code refreshed with new code: $loginCode")
+                        }
+                    } else {
+                        Log.e("MainActivity", "Failed to generate new QR code: ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error generating new QR code after session", e)
+            }
+        }
+    }
+
+    private fun showQrRefreshNotification(newCode: String) {
+        // Create a temporary TextView to show QR refresh notification
+        val notificationText = TextView(this).apply {
+            text = "🔄 QR Code Refreshed!\nNew Code: $newCode"
+            textSize = 16f
+            setTextColor(android.graphics.Color.GREEN)
+            gravity = android.view.Gravity.CENTER
+            alpha = 0f
+            setBackgroundColor(android.graphics.Color.parseColor("#AA000000"))
+            setPadding(40, 20, 40, 20)
+        }
+
+        val layout = findViewById<LinearLayout>(R.id.homescreen_layout)
+        layout.addView(notificationText)
+
+        // Animate the notification
+        notificationText.animate()
+            .alpha(1f)
+            .setDuration(500)
+            .withEndAction {
+                // Keep visible for 3 seconds then fade out
+                notificationText.animate()
+                    .alpha(0f)
+                    .setStartDelay(3000)
+                    .setDuration(500)
+                    .withEndAction {
+                        layout.removeView(notificationText)
+                    }
+            }
     }
 
     private suspend fun generateQrCode(text: String): Bitmap = withContext(Dispatchers.Default) {
@@ -474,42 +927,132 @@ class MainActivity : AppCompatActivity() {
         barcodeEncoder.createBitmap(bitMatrix)
     }
 
-    private fun startPollingForPairingStatus(tvId: Int) {
-        pollingJob = lifecycleScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                try {
-                    val request = Request.Builder()
-                        .url("$serverBaseUrl/api/tvs/$tvId")
-                        .get()
-                        .build()
 
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val responseData = response.body?.string()
-                            val jsonObject = JSONObject(responseData)
-                            val status = jsonObject.getString("status")
-                            val name = jsonObject.getString("name")
 
-                            if (status != "pairing") {
-                                withContext(Dispatchers.Main) {
-                                    statusTextView.text = "TV berhasil dipasangkan dengan nama: $name"
-                                    // Save the paired TV ID
-                                    sharedPreferences.edit().putInt("tvId", tvId).apply()
-                                    pollingJob?.cancel() // Stop polling
-                                    showHomeScreen(name) // Pindah ke homescreen
-                                }
-                            }
-                        } else {
-                            // Handle non-successful responses if needed
-                            Log.w("POLLING_WARN", "Polling check failed with code: ${response.code}")
-                        }
+    /**
+     * Register broadcast receiver for TV ID configuration
+     */
+    private fun registerTvIdReceiver() {
+        // Direct TV ID receiver (from ADB broadcast)
+        tvIdReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == TV_ID_BROADCAST_ACTION) {
+                    val receivedTvId = intent.getStringExtra("tv_id")?.toIntOrNull()
+                    if (receivedTvId != null) {
+                        Log.i("MainActivity", "🆔 Received TV ID via direct broadcast: $receivedTvId")
+                        handleTvIdConfiguration(receivedTvId)
+                    } else {
+                        Log.w("MainActivity", "❌ Invalid TV ID received via direct broadcast")
                     }
-                } catch (e: Exception) {
-                    Log.e("POLLING_ERROR", "Error during polling", e)
-                    // Optional: Decide if you want to stop polling on error
                 }
-                delay(5000) // Poll every 5 seconds
             }
+        }
+
+        // TV ID configured receiver (from TvIdReceiver)
+        tvIdConfiguredReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == TV_ID_CONFIGURED_ACTION) {
+                    val receivedTvId = intent.getStringExtra("tv_id")?.toIntOrNull()
+                    if (receivedTvId != null) {
+                        Log.i("MainActivity", "🆔 Received TV ID via configured broadcast: $receivedTvId")
+                        handleTvIdConfiguration(receivedTvId)
+                    } else {
+                        Log.w("MainActivity", "❌ Invalid TV ID received via configured broadcast")
+                    }
+                }
+            }
+        }
+
+        val directFilter = IntentFilter(TV_ID_BROADCAST_ACTION)
+        val configuredFilter = IntentFilter(TV_ID_CONFIGURED_ACTION)
+
+        registerReceiver(tvIdReceiver, directFilter)
+        registerReceiver(tvIdConfiguredReceiver, configuredFilter)
+
+        Log.i("MainActivity", "📡 TV ID broadcast receivers registered")
+    }
+
+    /**
+     * Handle TV ID configuration from broadcast
+     */
+    private fun handleTvIdConfiguration(receivedTvId: Int) {
+        // Save TV ID to SharedPreferences
+        sharedPreferences.edit().putInt("tvId", receivedTvId).apply()
+        tvId = receivedTvId
+
+        Log.i("MainActivity", "✅ TV ID configured: $receivedTvId")
+
+        // Update status
+        statusTextView.text = "TV ID dikonfigurasi: $receivedTvId. Mencari server..."
+
+        // If we have server URL, check TV status immediately
+        if (serverBaseUrl != null) {
+            checkTvStatus(receivedTvId)
+        }
+    }
+
+    /**
+     * Update connection status in UI
+     */
+    private fun updateConnectionStatus(status: String) {
+        runOnUiThread {
+            // Add version info to status display (UPDATED in v1.2.0)
+            val versionInfo = "🚀 v${BuildConfig.VERSION_NAME} - $status"
+            statusTextView.text = versionInfo
+            Log.i("MainActivity", "📱 UI Status updated: $versionInfo")
+        }
+    }
+
+    /**
+     * Unregister broadcast receivers
+     */
+    private fun unregisterTvIdReceiver() {
+        tvIdReceiver?.let {
+            try {
+                unregisterReceiver(it)
+                Log.i("MainActivity", "📡 Direct TV ID broadcast receiver unregistered")
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Warning: Failed to unregister direct TV ID receiver", e)
+            }
+        }
+        tvIdReceiver = null
+
+        tvIdConfiguredReceiver?.let {
+            try {
+                unregisterReceiver(it)
+                Log.i("MainActivity", "📡 Configured TV ID broadcast receiver unregistered")
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Warning: Failed to unregister configured TV ID receiver", e)
+            }
+        }
+        tvIdConfiguredReceiver = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Cancel all background jobs and disconnect Socket.IO
+        pollingJob?.cancel()
+        stopHeartbeat()
+        disconnectSocketIO()
+        // Unregister broadcast receiver
+        unregisterTvIdReceiver()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Cancel network scan job but keep session polling active
+        networkScanJob?.cancel()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Restart network scan if server not found
+        if (serverBaseUrl == null) {
+            startNetworkScan()
+        }
+        // Reconnect Socket.IO or restart polling if needed
+        if (tvId != null && socket?.connected() != true && pollingJob?.isActive != true) {
+            connectSocketIO(tvId!!)
         }
     }
 }
