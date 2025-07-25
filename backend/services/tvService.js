@@ -77,17 +77,14 @@ const generateLoginCode = (tvId) => {
 
 const getTvByLoginCode = (code) => {
     return new Promise((resolve, reject) => {
-        // CONDITIONAL EXPIRATION: Kode expired HANYA jika TV sedang digunakan
+        // SIMPLIFIED: Cukup cek code ada dan belum used
+        // Karena sudah ada mekanisme mark as used saat session start
         const sql = `
             SELECT tvs.*
             FROM tv_login_codes
             JOIN tvs ON tvs.id = tv_login_codes.tv_id
             WHERE tv_login_codes.code = ?
             AND tv_login_codes.used = 0
-            AND (
-                tvs.status = 'inactive' OR  -- TV idle = kode valid
-                datetime(tv_login_codes.created_at, '+30 minutes') > CURRENT_TIMESTAMP  -- Fallback 30 menit
-            )
         `;
         db.get(sql, [code], (err, row) => {
             if (err) return reject(err);
@@ -118,6 +115,7 @@ const createTv = (name, status, ipAddress) => {
             }
             if (row) {
                 // TV with this IP already exists, just return it
+                console.log(`📺 TV with IP ${ipAddress} already exists (ID: ${row.id}), returning existing TV`);
                 return resolve(row);
             } else {
                 // TV doesn't exist, create it
@@ -125,6 +123,7 @@ const createTv = (name, status, ipAddress) => {
                     if (err) {
                         reject(err);
                     } else {
+                        console.log(`📺 Created new TV: ${name} at ${ipAddress} (ID: ${this.lastID})`);
                         resolve({ id: this.lastID, name: name, status: status || 'off', ip_address: ipAddress });
                     }
                 });
@@ -192,6 +191,64 @@ const getTvById = (id) => {
         db.get("SELECT * FROM tvs WHERE id = ?", [id], (err, row) => {
             if (err) reject(err);
             else resolve(row);
+        });
+    });
+};
+
+// NEW: Update TV IP address specifically
+const updateTvIpAddress = (tvId, newIpAddress) => {
+    return new Promise((resolve, reject) => {
+        // First check if TV exists
+        db.get("SELECT * FROM tvs WHERE id = ?", [tvId], (err, tv) => {
+            if (err) return reject(err);
+            if (!tv) return reject(new Error('TV not found'));
+
+            const oldIpAddress = tv.ip_address;
+
+            // Update IP address
+            db.run("UPDATE tvs SET ip_address = ? WHERE id = ?", [newIpAddress, tvId], function(updateErr) {
+                if (updateErr) return reject(updateErr);
+
+                console.log(`📍 TV ${tvId} IP updated: ${oldIpAddress} → ${newIpAddress}`);
+
+                // Return updated TV data
+                getTvById(tvId).then(resolve).catch(reject);
+            });
+        });
+    });
+};
+
+// NEW: Find or create TV with IP update mechanism
+const findOrCreateTvWithIpUpdate = (tvId, currentIpAddress) => {
+    return new Promise((resolve, reject) => {
+        if (!tvId) {
+            // No TV ID provided, create new TV
+            return createTv(`TV_${Date.now()}`, 'inactive', currentIpAddress)
+                .then(resolve)
+                .catch(reject);
+        }
+
+        // TV ID provided, check if it exists and update IP if needed
+        db.get("SELECT * FROM tvs WHERE id = ?", [tvId], (err, tv) => {
+            if (err) return reject(err);
+
+            if (!tv) {
+                // TV ID not found, create new TV
+                return createTv(`TV_${Date.now()}`, 'inactive', currentIpAddress)
+                    .then(resolve)
+                    .catch(reject);
+            }
+
+            // TV exists, check if IP needs update
+            if (tv.ip_address !== currentIpAddress) {
+                console.log(`📍 TV ${tvId} IP changed: ${tv.ip_address} → ${currentIpAddress}`);
+                return updateTvIpAddress(tvId, currentIpAddress)
+                    .then(resolve)
+                    .catch(reject);
+            }
+
+            // TV exists and IP is same, return as is
+            resolve(tv);
         });
     });
 };
@@ -413,73 +470,21 @@ const getPackageById = (id) => {
 // Login code cleanup functions
 const checkAndNotifyExpiredLoginCodes = async (io) => {
     return new Promise((resolve, reject) => {
-        // Find expired codes that haven't been notified yet
-        const sql = `
-            SELECT DISTINCT tv_id, code
-            FROM tv_login_codes
-            WHERE datetime(created_at, '+5 minutes') <= CURRENT_TIMESTAMP
-            AND (used = 0 OR used IS NULL)
-            AND (notified = 0 OR notified IS NULL)
-        `;
-
-        db.all(sql, [], (err, expiredCodes) => {
-            if (err) {
-                return reject(err);
-            }
-
-            let notified = 0;
-            let skipped = 0;
-
-            if (expiredCodes.length === 0) {
-                return resolve({ notified: 0, skipped: 0 });
-            }
-
-            // Notify each TV about expired codes via Socket.IO
-            expiredCodes.forEach(({ tv_id, code }) => {
-                if (io) {
-                    io.emit(`tv_login_code_expired_${tv_id}`, {
-                        tvId: tv_id,
-                        expiredCode: code,
-                        timestamp: new Date().toISOString()
-                    });
-
-                    // Also emit general event
-                    io.emit('login_code_expired', {
-                        tvId: tv_id,
-                        expiredCode: code,
-                        timestamp: new Date().toISOString()
-                    });
-
-                    notified++;
-                } else {
-                    skipped++;
-                }
-            });
-
-            // Mark codes as notified
-            if (notified > 0) {
-                const codes = expiredCodes.map(c => c.code);
-                const placeholders = codes.map(() => '?').join(',');
-                const updateSql = `UPDATE tv_login_codes SET notified = 1 WHERE code IN (${placeholders})`;
-
-                db.run(updateSql, codes, (updateErr) => {
-                    if (updateErr) {
-                        console.error('Error marking codes as notified:', updateErr);
-                    }
-                });
-            }
-
-            resolve({ notified, skipped });
-        });
+        // SIMPLIFIED: Dengan logika baru, code untuk TV inactive tidak expired
+        // Jadi tidak perlu notifikasi expired codes
+        // Fungsi ini tetap ada untuk backward compatibility tapi tidak melakukan apa-apa
+        console.log('🔄 Expired code notification skipped - using simplified logic');
+        resolve({ notified: 0, skipped: 0 });
     });
 };
 
 const cleanupExpiredLoginCodes = () => {
     return new Promise((resolve, reject) => {
+        // SIMPLIFIED: Hanya hapus code yang sudah used
+        // Code yang belum used tetap valid untuk TV inactive
         const sql = `
             DELETE FROM tv_login_codes
-            WHERE datetime(created_at, '+5 minutes') <= CURRENT_TIMESTAMP
-            OR used = 1
+            WHERE used = 1
         `;
 
         db.run(sql, [], function(err) {
@@ -883,6 +888,8 @@ const checkUserEligibility = async (phone) => {
 
 module.exports = {
     updateTvDetails,
+    updateTvIpAddress, // NEW: Export IP update function
+    findOrCreateTvWithIpUpdate, // NEW: Export find or create with IP update
     generateLoginCode,
     getTvByLoginCode,
     markLoginCodeAsUsed,

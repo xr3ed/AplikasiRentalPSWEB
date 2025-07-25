@@ -700,3 +700,102 @@ others: opacity(0.2) scale(0.75)
 - **Accessibility Awareness**: Maintained usability across different interaction methods
 
 **RESULT**: Completely redesigned package selection cards with creative layouts, smooth scrolling, unified glow effects, and modern minimalist scrollbar - creating an engaging and professional package selection experience.
+
+## MAJOR UPDATE: TV LOGIN CODE & SETUP SYSTEM OVERHAUL (2025-01-25)
+
+### 🔐 LOGIN CODE SYSTEM ENHANCEMENT
+- ✅ **AUTOMATIC QR REFRESH**: Implemented automatic QR code refresh via real-time communication using existing session polling infrastructure (SEAMLESS UX)
+- ✅ **TIME-BASED SECURITY**: Maintained 5-minute login code expiration while implementing automatic refresh to eliminate user intervention (SECURITY + UX)
+- ✅ **POLLING-BASED REFRESH**: Leveraged existing `/api/tvs/{id}` polling mechanism to detect login code expiration and trigger automatic refresh (EFFICIENT)
+- ✅ **REAL-TIME COMMUNICATION**: Enhanced session polling to handle QR refresh without additional WebSocket connections (OPTIMIZED)
+- ✅ **SEAMLESS USER EXPERIENCE**: Users never see expired QR codes - automatic refresh happens in background (INVISIBLE AUTOMATION)
+
+### 🛠️ TV SETUP WORKFLOW SEPARATION
+- ✅ **DUAL-FUNCTION SYSTEM**: Separated "Setup TV Otomatis" and "Tambah TV" into distinct, sequential operations (WORKFLOW CLARITY)
+- ✅ **SETUP TV OTOMATIS**: Performs ping check, ADB connect, install Helper app, grant permissions WITHOUT database operations (PREPARATION PHASE)
+- ✅ **TAMBAH TV**: Validates input, creates database entry, configures TV ID, launches Helper app (FINALIZATION PHASE)
+- ✅ **PER-IP STATE MANAGEMENT**: Tracks setup completion status for each IP address independently (GRANULAR CONTROL)
+- ✅ **SEQUENTIAL DEPENDENCY**: "Tambah TV" only enabled after successful "Setup TV Otomatis" completion (LOGICAL FLOW)
+
+### 🔧 BACKEND ARCHITECTURE IMPROVEMENTS
+- ✅ **NEW ENDPOINT `/api/tvs/setup-only`**: Dedicated endpoint for setup without database operations (SEPARATION OF CONCERNS)
+- ✅ **MODIFIED `/api/tvs/add-adb`**: Refactored to focus on database operations and final configuration steps (FOCUSED RESPONSIBILITY)
+- ✅ **SERVICE LAYER ENHANCEMENT**: Added `setupTvWithoutLaunch()` and `configureTvIdAndLaunch()` methods (MODULAR SERVICES)
+- ✅ **REAL-TIME UPDATES**: WebSocket integration with `setupType` differentiation for proper event handling (CONTEXTUAL COMMUNICATION)
+- ✅ **DUPLICATE VALIDATION**: Enhanced validation for TV name and IP address duplicates before database creation (DATA INTEGRITY)
+
+### 🎯 FRONTEND STATE MANAGEMENT OVERHAUL
+- ✅ **PER-IP SETUP STATES**: Implemented `ipSetupStates` object to track setup status for each IP address (GRANULAR TRACKING)
+- ✅ **DYNAMIC BUTTON STATES**: "Tambah TV" button dynamically enabled/disabled based on setup completion status (INTELLIGENT UI)
+- ✅ **CONTEXTUAL FEEDBACK**: Status messages and button text adapt based on current setup state (ADAPTIVE INTERFACE)
+- ✅ **RETRY MECHANISM**: Built-in retry capability with error state tracking per IP address (RESILIENT SYSTEM)
+- ✅ **VISUAL INDICATORS**: Color-coded status indicators and tooltips for clear user guidance (INTUITIVE FEEDBACK)
+
+### 📱 USER EXPERIENCE ENHANCEMENTS
+- ✅ **CLEAR WORKFLOW GUIDANCE**: Users understand they must complete setup before adding TV to system (GUIDED PROCESS)
+- ✅ **REAL-TIME PROGRESS**: Live updates during both setup and add operations with WebSocket communication (TRANSPARENT PROGRESS)
+- ✅ **ERROR HANDLING**: Specific error messages for different failure scenarios with actionable guidance (HELPFUL ERRORS)
+- ✅ **MODAL IMPROVEMENTS**: Context-aware modal subtitles that reflect current operation type (CONTEXTUAL INFORMATION)
+- ✅ **STATUS PERSISTENCE**: Setup completion status persists across page interactions (STATEFUL EXPERIENCE)
+
+### 🔄 TECHNICAL IMPLEMENTATION DETAILS
+- ✅ **WEBSOCKET EVENT TYPES**: Differentiated events with `setupType: 'setup-only'` vs `setupType: 'add-tv'` (EVENT CATEGORIZATION)
+- ✅ **SERVICE METHOD SEPARATION**: `setupTvWithoutLaunch()` handles preparation, `configureTvIdAndLaunch()` handles finalization (CLEAN SEPARATION)
+- ✅ **STATE VALIDATION**: Frontend validates setup completion before allowing database operations (DEFENSIVE PROGRAMMING)
+- ✅ **ERROR RECOVERY**: Comprehensive error handling with specific error types and recovery suggestions (ROBUST ERROR HANDLING)
+- ✅ **LAUNCH HELPER APP FIX**: Fixed `launchHelperApp()` return format from boolean to object with success/message properties (CRITICAL BUG FIX)
+
+### 🛡️ SECURITY & VALIDATION IMPROVEMENTS
+- ✅ **INPUT VALIDATION**: Enhanced validation for TV name and IP address format and uniqueness (DATA QUALITY)
+- ✅ **DUPLICATE PREVENTION**: Database-level checks prevent duplicate TV names and IP addresses (INTEGRITY CONSTRAINTS)
+- ✅ **SETUP VERIFICATION**: System verifies setup completion before allowing database operations (PROCESS VALIDATION)
+- ✅ **ERROR CATEGORIZATION**: Different error types with appropriate user guidance and retry options (INTELLIGENT ERROR HANDLING)
+
+### 📊 SYSTEM WORKFLOW DIAGRAM
+```
+User Input (Name + IP)
+    ↓
+"Setup TV Otomatis" Button
+    ├── Ping Check ✅
+    ├── ADB Connect + Authorization ✅
+    ├── Install Helper App ✅
+    └── Grant Permissions ✅
+    (TV prepared, not in database)
+    ↓
+"Tambah TV" Button (now enabled)
+    ├── Validate Input ✅
+    ├── Check Duplicates ✅
+    ├── Create TV in Database ✅
+    ├── Configure TV ID ✅
+    └── Launch Helper App ✅
+    ↓
+TV Successfully Added to System! 🎉
+```
+
+### 🎯 PERFORMANCE METRICS
+- Setup Phase: Isolated from database operations (faster execution)
+- Add Phase: Focused on database and configuration (streamlined process)
+- Error Recovery: Per-IP state tracking (granular retry capability)
+- User Guidance: Context-aware feedback (reduced confusion)
+- System Reliability: Separated concerns (improved maintainability)
+
+### 🚀 INNOVATION HIGHLIGHTS
+- **Workflow Separation**: First implementation to separate TV setup preparation from database operations
+- **Per-IP State Management**: Granular tracking of setup status for multiple IP addresses
+- **Contextual UI**: Dynamic button states and feedback based on current operation context
+- **Sequential Dependencies**: Logical workflow enforcement through UI state management
+- **Real-time Communication**: WebSocket integration with operation-specific event types
+
+### 🔧 CRITICAL BUG FIXES
+- ✅ **LAUNCH HELPER APP ERROR**: Fixed `launchHelperApp()` function return format causing "undefined" errors (CRITICAL FIX)
+- ✅ **WEBSOCKET EVENT HANDLING**: Proper event differentiation between setup and add operations (COMMUNICATION FIX)
+- ✅ **STATE MANAGEMENT**: Fixed stale state issues with per-IP tracking implementation (STATE FIX)
+- ✅ **BUTTON VALIDATION**: Corrected button enable/disable logic based on setup completion (UI FIX)
+
+### 📱 USER INTERFACE IMPROVEMENTS
+- ✅ **DYNAMIC BUTTON TEXT**: Button text changes based on current state ("Setup Required" → "Adding TV..." → "Tambah TV") (ADAPTIVE UI)
+- ✅ **STATUS INDICATORS**: Color-coded status messages below buttons with contextual information (VISUAL FEEDBACK)
+- ✅ **TOOLTIP ENHANCEMENTS**: Context-aware tooltips that guide users through the workflow (HELPFUL GUIDANCE)
+- ✅ **MODAL CONTEXT**: Modal subtitles now reflect the specific operation being performed (CONTEXTUAL INFORMATION)
+
+**RESULT**: Complete overhaul of TV setup system with clear workflow separation, per-IP state management, automatic QR refresh, and enhanced user experience - creating a logical, guided process for TV setup and database integration.

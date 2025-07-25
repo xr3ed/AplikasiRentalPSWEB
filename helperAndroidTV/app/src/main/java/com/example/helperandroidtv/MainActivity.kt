@@ -204,6 +204,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // NEW: Refresh configuration state - untuk auto-navigation setelah server connect
+    private fun refreshConfigurationState() {
+        Log.i("REFRESH_CONFIG", "🔄 Refreshing configuration state...")
+
+        // Re-check saved TV ID
+        val savedTvId = sharedPreferences.getInt("tvId", -1)
+        if (savedTvId != -1) {
+            tvId = savedTvId
+            Log.i("REFRESH_CONFIG", "✅ Found saved TV ID: $savedTvId, checking status...")
+            checkTvStatus(savedTvId)
+        } else {
+            Log.i("REFRESH_CONFIG", "❌ No saved TV ID, finding by IP...")
+            findTvByIpAddress()
+        }
+    }
+
     private fun findTvByIpAddress() {
         val localIp = getLocalIpAddress()
         if (localIp == null) {
@@ -243,9 +259,15 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // No matching TV found
-                        withContext(Dispatchers.Main) {
-                            showTvNotConfiguredScreen()
+                        // No matching TV found, try to update IP for existing TV ID if available
+                        val savedTvId = sharedPreferences.getInt("tvId", -1)
+                        if (savedTvId != -1) {
+                            Log.i("FIND_TV_BY_IP", "🔄 No IP match found, trying to update IP for saved TV ID: $savedTvId")
+                            tryUpdateTvIpAddress(savedTvId, localIp)
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                showTvNotConfiguredScreen()
+                            }
                         }
                     } else {
                         withContext(Dispatchers.Main) {
@@ -255,6 +277,46 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Log.e("TV_IP_SEARCH", "Error finding TV by IP", e)
+                withContext(Dispatchers.Main) {
+                    showTvNotConfiguredScreen()
+                }
+            }
+        }
+    }
+
+    // NEW: Try to update TV IP address
+    private fun tryUpdateTvIpAddress(tvId: Int, newIpAddress: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val requestBody = JSONObject().apply {
+                    put("ip_address", newIpAddress)
+                }.toString().toRequestBody("application/json".toMediaType())
+
+                val request = Request.Builder()
+                    .url("$serverBaseUrl/api/tvs/$tvId/update-ip")
+                    .put(requestBody)
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.body!!.string())
+                        val updatedTv = json.getJSONObject("tv")
+                        val tvName = updatedTv.getString("name")
+
+                        Log.i("UPDATE_TV_IP", "✅ TV IP updated successfully: $tvName")
+
+                        withContext(Dispatchers.Main) {
+                            showHomeScreen(tvName, tvId)
+                        }
+                    } else {
+                        Log.e("UPDATE_TV_IP", "❌ Failed to update TV IP: ${response.code}")
+                        withContext(Dispatchers.Main) {
+                            showTvNotConfiguredScreen()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("UPDATE_TV_IP", "❌ Error updating TV IP", e)
                 withContext(Dispatchers.Main) {
                     showTvNotConfiguredScreen()
                 }
@@ -339,8 +401,8 @@ class MainActivity : AppCompatActivity() {
                 sharedPreferences.edit().putString("lastServerIp", discoveredIp).apply()
                 withContext(Dispatchers.Main) {
                     statusTextView.text = "Server ditemukan via UDP di $serverBaseUrl!"
-                    // Check if TV is already configured
-                    checkTvConfiguration()
+                    // Refresh configuration state untuk auto-navigation
+                    refreshConfigurationState()
                 }
                 networkScanJob?.cancel()
                 return@launch
@@ -361,7 +423,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putString("lastServerIp", manualIp).apply()
                             withContext(Dispatchers.Main) {
                                 statusTextView.text = "Server ditemukan di $serverBaseUrl!"
-                                checkTvConfiguration()
+                                refreshConfigurationState()
                             }
                             networkScanJob?.cancel()
                             return@launch
@@ -415,7 +477,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putString("lastServerIp", host).apply()
                             withContext(Dispatchers.Main) {
                                 statusTextView.text = "Server ditemukan di $serverBaseUrl!"
-                                checkTvConfiguration()
+                                refreshConfigurationState()
                             }
                             networkScanJob?.cancel()
                             return@use

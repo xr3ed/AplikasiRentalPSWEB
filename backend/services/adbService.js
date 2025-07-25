@@ -101,17 +101,24 @@ class ADBService {
                 ]);
 
                 if (connectResult.includes('connected') || connectResult.includes('already connected')) {
+                    console.log(`✅ [ADB Connect] Connection successful: ${connectResult.trim()}`);
+
                     // Wait for device to be recognized and potentially show debugging dialog
                     await new Promise(resolve => setTimeout(resolve, 2000));
 
                     // Check if device is authorized using adb devices command
                     const devicesResult = await this.executeAdbCommand(['devices']);
+                    console.log(`📱 [ADB Devices] Result: ${devicesResult.trim()}`);
+
                     const deviceLines = devicesResult.split('\n').filter(line => line.includes(deviceId));
+                    console.log(`🔍 [ADB Devices] Found device lines: ${JSON.stringify(deviceLines)}`);
 
                     if (deviceLines.length > 0) {
                         const deviceLine = deviceLines[0];
+                        console.log(`📋 [ADB Devices] Device line: "${deviceLine.trim()}"`);
 
                         if (deviceLine.includes('device') && !deviceLine.includes('unauthorized')) {
+                            console.log(`✅ [ADB Connect] Device authorized immediately`);
                             return {
                                 success: true,
                                 status: 'authorized',
@@ -120,6 +127,7 @@ class ADBService {
                                 connectOutput: connectResult
                             };
                         } else if (deviceLine.includes('unauthorized')) {
+                            console.log(`🔐 [ADB Connect] Device connected but unauthorized - waiting for user approval`);
                             return {
                                 success: false,
                                 status: 'unauthorized',
@@ -133,10 +141,22 @@ class ADBService {
                                     'Dialog mungkin muncul beberapa detik setelah koneksi'
                                 ]
                             };
+                        } else {
+                            console.log(`⚠️ [ADB Connect] Device found but unknown status: "${deviceLine.trim()}"`);
+                            // Device found but unknown status - still try to wait for authorization
+                            return {
+                                success: false,
+                                status: 'connecting',
+                                message: 'TV terhubung dengan status tidak dikenal. Menunggu dialog debugging...',
+                                deviceId: deviceId,
+                                connectOutput: connectResult,
+                                deviceLine: deviceLine.trim()
+                            };
                         }
                     }
 
-                    // Connection successful but device not showing up yet
+                    // Connection successful but device not showing up yet - this is NORMAL for first connection
+                    console.log(`⏳ [ADB Connect] Connection successful but device not in list yet - waiting for authorization dialog`);
                     return {
                         success: false,
                         status: 'connecting',
@@ -150,6 +170,7 @@ class ADBService {
                         ]
                     };
                 } else if (connectResult.includes('cannot connect') || connectResult.includes('failed to connect')) {
+                    console.log(`❌ [ADB Connect] Connection refused: ${connectResult.trim()}`);
                     return {
                         success: false,
                         status: 'connection_refused',
@@ -164,12 +185,15 @@ class ADBService {
                         ]
                     };
                 } else {
+                    // Unknown adb connect output - log it and treat as connecting (not failed!)
+                    console.log(`⚠️ [ADB Connect] Unknown connect result: "${connectResult.trim()}" - treating as connecting`);
                     return {
                         success: false,
-                        status: 'connection_failed',
-                        message: 'Gagal terhubung ke TV. Periksa alamat IP dan pengaturan jaringan.',
+                        status: 'connecting',
+                        message: 'Koneksi dalam proses. Menunggu dialog debugging muncul di TV...',
                         deviceId: deviceId,
-                        connectOutput: connectResult
+                        connectOutput: connectResult,
+                        note: 'Unknown connect result - treated as connecting to allow authorization wait'
                     };
                 }
             } catch (timeoutError) {
@@ -438,31 +462,225 @@ class ADBService {
     }
 
     /**
-     * Complete TV setup - install Helper app and configure TV ID
+     * Wait for user to authorize ADB debugging on TV
      * @param {string} ipAddress - IP address of the Android TV
-     * @param {number} tvId - TV ID from database
      * @param {number} port - ADB port (default: 5555)
+     * @param {number} maxWaitTime - Maximum wait time in milliseconds (default: 60000)
+     * @param {Function} statusCallback - Optional callback for status updates
+     * @returns {Promise<Object>} Authorization result
+     */
+    async waitForAuthorization(ipAddress, port = 5555, maxWaitTime = 60000, statusCallback = null) {
+        try {
+            const startTime = Date.now();
+            const deviceId = `${ipAddress}:${port}`;
+            let lastStatus = null;
+
+            console.log(`⏳ [ADB Auth] Waiting for user authorization on ${ipAddress} (timeout: ${maxWaitTime/1000}s)`);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'waiting_authorization',
+                    message: 'Menunggu persetujuan debugging di TV...',
+                    instructions: [
+                        'Lihat layar TV untuk dialog konfirmasi debugging',
+                        'Pilih "Allow" atau "Izinkan" pada dialog tersebut',
+                        'Centang "Always allow from this computer" jika tersedia'
+                    ]
+                });
+            }
+
+            while (Date.now() - startTime < maxWaitTime) {
+                const status = await this.checkDeviceStatus(ipAddress, port);
+
+                // Log status change
+                if (status.status !== lastStatus) {
+                    console.log(`📱 [ADB Auth] Device status changed: ${lastStatus} → ${status.status}`);
+                    lastStatus = status.status;
+
+                    if (statusCallback) {
+                        statusCallback({
+                            type: 'status_update',
+                            status: status.status,
+                            authorized: status.authorized,
+                            connected: status.connected
+                        });
+                    }
+                }
+
+                if (status.authorized && status.status === 'device') {
+                    console.log(`✅ [ADB Auth] TV authorized successfully at ${ipAddress}`);
+
+                    if (statusCallback) {
+                        statusCallback({
+                            type: 'authorized',
+                            message: 'TV berhasil diotorisasi! Melanjutkan setup...'
+                        });
+                    }
+
+                    return {
+                        success: true,
+                        message: 'TV berhasil diotorisasi',
+                        deviceId: deviceId,
+                        waitTime: Date.now() - startTime
+                    };
+                }
+
+                if (status.status === 'unauthorized') {
+                    // Masih menunggu user accept
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    const remaining = Math.floor((maxWaitTime - (Date.now() - startTime)) / 1000);
+
+                    if (statusCallback && elapsed % 10 === 0) { // Update setiap 10 detik
+                        statusCallback({
+                            type: 'waiting_progress',
+                            message: `Menunggu persetujuan... (${remaining}s tersisa)`,
+                            elapsed: elapsed,
+                            remaining: remaining
+                        });
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll setiap 2 detik
+                    continue;
+                }
+
+                if (!status.connected) {
+                    console.log(`❌ [ADB Auth] Connection lost to ${ipAddress}`);
+
+                    if (statusCallback) {
+                        statusCallback({
+                            type: 'connection_lost',
+                            message: 'Koneksi ke TV terputus'
+                        });
+                    }
+
+                    return {
+                        success: false,
+                        message: 'Koneksi ke TV terputus selama menunggu otorisasi',
+                        deviceId: deviceId,
+                        status: status.status
+                    };
+                }
+
+                // Status lain yang tidak diharapkan
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
+            // Timeout
+            console.log(`⏰ [ADB Auth] Authorization timeout for ${ipAddress} after ${maxWaitTime/1000}s`);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'timeout',
+                    message: 'Timeout menunggu persetujuan debugging'
+                });
+            }
+
+            return {
+                success: false,
+                message: `Timeout menunggu otorisasi debugging (${maxWaitTime/1000}s)`,
+                deviceId: deviceId,
+                timeout: true
+            };
+
+        } catch (error) {
+            console.error(`❌ [ADB Auth] Error waiting for authorization:`, error);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'error',
+                    message: `Error: ${error.message}`
+                });
+            }
+
+            return {
+                success: false,
+                message: `Error menunggu otorisasi: ${error.message}`,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Setup TV without launching app - for "Setup TV Otomatis"
+     * @param {string} ipAddress - IP address of the Android TV
+     * @param {number} port - ADB port (default: 5555)
+     * @param {Function} statusCallback - Optional callback for status updates
      * @returns {Promise<Object>} Setup result
      */
-    async setupTvComplete(ipAddress, tvId, port = 5555) {
+    async setupTvWithoutLaunch(ipAddress, port = 5555, statusCallback = null) {
         try {
-            console.log(`🔧 [ADB Setup] Starting complete TV setup for ${ipAddress} with TV ID ${tvId}`);
+            console.log(`🔧 [ADB Setup Without Launch] Starting TV setup for ${ipAddress}`);
 
             const deviceId = `${ipAddress}:${port}`;
             const setupResults = {
                 deviceId: deviceId,
-                tvId: tvId,
                 steps: {}
             };
 
-            // Step 1: Check if Helper app is installed
+            // Step 1: Connect to TV
+            console.log(`🔌 [ADB Setup] Connecting to TV...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'connecting',
+                    message: 'Menghubungkan ke TV...'
+                });
+            }
+
+            const connectResult = await this.connectToTV(ipAddress, port);
+            setupResults.steps.connection = connectResult;
+
+            // Step 1.5: Wait for authorization if needed
+            if (connectResult.status === 'unauthorized') {
+                console.log(`🔐 [ADB Setup] TV not authorized, waiting for user acceptance...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${authResult.message}`);
+                }
+            } else if (connectResult.status === 'connecting') {
+                console.log(`🔄 [ADB Setup] TV connecting, waiting for authorization dialog...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${authResult.message}`);
+                }
+            } else if (connectResult.success && connectResult.status === 'authorized') {
+                console.log(`✅ [ADB Setup] TV already authorized`);
+                setupResults.steps.authorization = { success: true, message: 'Already authorized' };
+            } else if (!connectResult.success && ['network_unreachable', 'connection_refused', 'timeout'].includes(connectResult.status)) {
+                // Only throw error for REAL connection failures (removed 'connection_failed' since we changed it to 'connecting')
+                throw new Error(`Connection failed: ${connectResult.message}`);
+            } else {
+                // For any other status, try to wait for authorization as fallback
+                console.log(`🔄 [ADB Setup] Unknown status '${connectResult.status}', attempting authorization wait...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${connectResult.message || authResult.message}`);
+                }
+            }
+
+            // Step 2: Check if Helper app is installed
             console.log(`📱 [ADB Setup] Checking if Helper app is installed...`);
             const isInstalled = await this.checkHelperAppInstalled(ipAddress, port);
             setupResults.steps.appInstalled = isInstalled;
 
             if (!isInstalled) {
-                // Step 2: Install Helper app
+                // Step 3: Install Helper app
                 console.log(`📦 [ADB Setup] Installing Helper app...`);
+                if (statusCallback) {
+                    statusCallback({
+                        type: 'installing_app',
+                        message: 'Menginstall aplikasi Helper...'
+                    });
+                }
+
                 const installResult = await this.installHelperApp(ipAddress, port);
                 setupResults.steps.appInstallation = installResult;
 
@@ -474,22 +692,261 @@ class ADBService {
                 setupResults.steps.appInstallation = { success: true, message: 'Already installed' };
             }
 
-            // Step 3: Grant overlay permission
+            // Step 4: Grant overlay permission
             console.log(`🔐 [ADB Setup] Granting overlay permission...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'granting_permission',
+                    message: 'Memberikan izin overlay...'
+                });
+            }
+
             const overlayResult = await this.grantOverlayPermission(ipAddress, port);
             setupResults.steps.overlayPermission = overlayResult;
 
-            // Step 4: Configure TV ID
+            console.log(`✅ [ADB Setup Without Launch] Setup completed successfully for ${ipAddress}`);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'setup_completed',
+                    message: 'Setup berhasil diselesaikan!'
+                });
+            }
+
+            return {
+                success: true,
+                message: 'TV setup completed successfully (without launch)',
+                details: setupResults
+            };
+
+        } catch (error) {
+            console.error(`❌ [ADB Setup Without Launch] Error during TV setup for ${ipAddress}:`, error);
+            return {
+                success: false,
+                message: `Setup failed: ${error.message}`,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Configure TV ID and Launch Helper App - for "Tambah TV" final steps
+     * @param {string} ipAddress - IP address of the Android TV
+     * @param {number} tvId - TV ID from database
+     * @param {number} port - ADB port (default: 5555)
+     * @param {Function} statusCallback - Optional callback for status updates
+     * @returns {Promise<Object>} Configuration result
+     */
+    async configureTvIdAndLaunch(ipAddress, tvId, port = 5555, statusCallback = null) {
+        try {
+            console.log(`🔧 [Configure & Launch] Starting final steps for TV ${tvId} at ${ipAddress}`);
+
+            const deviceId = `${ipAddress}:${port}`;
+            const finalStepsResults = {
+                deviceId: deviceId,
+                tvId: tvId,
+                steps: {}
+            };
+
+            // Step 1: Configure TV ID
+            console.log(`🆔 [Configure & Launch] Configuring TV ID...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'configuring_tv_id',
+                    message: 'Mengkonfigurasi ID TV...'
+                });
+            }
+
+            const configResult = await this.configureTvId(ipAddress, tvId, port);
+            finalStepsResults.steps.tvIdConfiguration = configResult;
+
+            if (!configResult.success) {
+                throw new Error(`Failed to configure TV ID: ${configResult.message}`);
+            }
+
+            // Step 2: Launch Helper app
+            console.log(`🚀 [Configure & Launch] Launching Helper app...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'launching_app',
+                    message: 'Meluncurkan aplikasi Helper...'
+                });
+            }
+
+            const launchResult = await this.launchHelperApp(ipAddress, port);
+            finalStepsResults.steps.appLaunch = launchResult;
+
+            if (!launchResult.success) {
+                throw new Error(`Failed to launch Helper app: ${launchResult.message}`);
+            }
+
+            console.log(`✅ [Configure & Launch] Final steps completed successfully for TV ${tvId}`);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'completed',
+                    message: 'TV berhasil ditambahkan ke sistem!'
+                });
+            }
+
+            return {
+                success: true,
+                message: 'TV configuration and launch completed successfully',
+                details: finalStepsResults
+            };
+
+        } catch (error) {
+            console.error(`❌ [Configure & Launch] Error during final steps for TV ${tvId}:`, error);
+            return {
+                success: false,
+                message: `Final steps failed: ${error.message}`,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Complete TV setup - install Helper app and configure TV ID
+     * @param {string} ipAddress - IP address of the Android TV
+     * @param {number} tvId - TV ID from database
+     * @param {number} port - ADB port (default: 5555)
+     * @param {Function} statusCallback - Optional callback for status updates
+     * @returns {Promise<Object>} Setup result
+     */
+    async setupTvComplete(ipAddress, tvId, port = 5555, statusCallback = null) {
+        try {
+            console.log(`🔧 [ADB Setup] Starting complete TV setup for ${ipAddress} with TV ID ${tvId}`);
+
+            const deviceId = `${ipAddress}:${port}`;
+            const setupResults = {
+                deviceId: deviceId,
+                tvId: tvId,
+                steps: {}
+            };
+
+            // Step 1: Connect to TV
+            console.log(`🔌 [ADB Setup] Connecting to TV...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'connecting',
+                    message: 'Menghubungkan ke TV...'
+                });
+            }
+
+            const connectResult = await this.connectToTV(ipAddress, port);
+            setupResults.steps.connection = connectResult;
+
+            // Step 1.5: Wait for authorization if needed
+            if (connectResult.status === 'unauthorized') {
+                console.log(`🔐 [ADB Setup] TV not authorized, waiting for user acceptance...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${authResult.message}`);
+                }
+            } else if (connectResult.status === 'connecting') {
+                console.log(`🔄 [ADB Setup] TV connecting, waiting for authorization dialog...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${authResult.message}`);
+                }
+            } else if (connectResult.success && connectResult.status === 'authorized') {
+                console.log(`✅ [ADB Setup] TV already authorized`);
+                setupResults.steps.authorization = { success: true, message: 'Already authorized' };
+            } else if (!connectResult.success && ['network_unreachable', 'connection_refused', 'timeout'].includes(connectResult.status)) {
+                // Only throw error for REAL connection failures (removed 'connection_failed' since we changed it to 'connecting')
+                throw new Error(`Connection failed: ${connectResult.message}`);
+            } else {
+                // For any other status, try to wait for authorization as fallback
+                console.log(`🔄 [ADB Setup] Unknown status '${connectResult.status}', attempting authorization wait...`);
+
+                const authResult = await this.waitForAuthorization(ipAddress, port, 60000, statusCallback);
+                setupResults.steps.authorization = authResult;
+
+                if (!authResult.success) {
+                    throw new Error(`Authorization failed: ${connectResult.message || authResult.message}`);
+                }
+            }
+
+            // Step 2: Check if Helper app is installed
+            console.log(`📱 [ADB Setup] Checking if Helper app is installed...`);
+            const isInstalled = await this.checkHelperAppInstalled(ipAddress, port);
+            setupResults.steps.appInstalled = isInstalled;
+
+            if (!isInstalled) {
+                // Step 3: Install Helper app
+                console.log(`📦 [ADB Setup] Installing Helper app...`);
+                if (statusCallback) {
+                    statusCallback({
+                        type: 'installing_app',
+                        message: 'Menginstall aplikasi Helper...'
+                    });
+                }
+
+                const installResult = await this.installHelperApp(ipAddress, port);
+                setupResults.steps.appInstallation = installResult;
+
+                if (!installResult.success) {
+                    throw new Error(`Failed to install Helper app: ${installResult.error}`);
+                }
+            } else {
+                console.log(`✅ [ADB Setup] Helper app already installed`);
+                setupResults.steps.appInstallation = { success: true, message: 'Already installed' };
+            }
+
+            // Step 4: Grant overlay permission
+            console.log(`🔐 [ADB Setup] Granting overlay permission...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'granting_permission',
+                    message: 'Memberikan izin overlay...'
+                });
+            }
+
+            const overlayResult = await this.grantOverlayPermission(ipAddress, port);
+            setupResults.steps.overlayPermission = overlayResult;
+
+            // Step 5: Configure TV ID
             console.log(`🆔 [ADB Setup] Configuring TV ID...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'configuring_tv_id',
+                    message: 'Mengkonfigurasi ID TV...'
+                });
+            }
+
             const configResult = await this.configureTvId(ipAddress, tvId, port);
             setupResults.steps.tvIdConfiguration = configResult;
 
-            // Step 5: Launch Helper app
+            // Step 6: Launch Helper app
             console.log(`🚀 [ADB Setup] Launching Helper app...`);
+            if (statusCallback) {
+                statusCallback({
+                    type: 'launching_app',
+                    message: 'Meluncurkan aplikasi Helper...'
+                });
+            }
+
             const launchResult = await this.launchHelperApp(ipAddress, port);
             setupResults.steps.appLaunch = launchResult;
 
+            if (!launchResult.success) {
+                throw new Error(`Failed to launch Helper app: ${launchResult.message}`);
+            }
+
             console.log(`✅ [ADB Setup] Complete TV setup finished successfully for ${ipAddress}`);
+
+            if (statusCallback) {
+                statusCallback({
+                    type: 'completed',
+                    message: 'Setup TV berhasil diselesaikan!'
+                });
+            }
 
             return {
                 success: true,
@@ -659,13 +1116,13 @@ class ADBService {
      * Launch Helper app on the TV
      * @param {string} ipAddress - IP address of the Android TV
      * @param {number} port - ADB port (default: 5555)
-     * @returns {Promise<boolean>} True if launch successful
+     * @returns {Promise<Object>} Launch result with success status and message
      */
     async launchHelperApp(ipAddress, port = 5555) {
         try {
             const deviceId = `${ipAddress}:${port}`;
 
-            console.log(`🚀 [ADB Monitoring] Launching Helper app on ${ipAddress}...`);
+            console.log(`🚀 [ADB Launch] Launching Helper app on ${ipAddress}...`);
 
             // Launch main activity
             const result = await this.executeAdbCommand([
@@ -677,16 +1134,25 @@ class ADBService {
             const success = result.includes('Starting') || result.includes('Activity');
 
             if (success) {
-                console.log(`✅ [ADB Monitoring] Helper app launched successfully on ${ipAddress}`);
+                console.log(`✅ [ADB Launch] Helper app launched successfully on ${ipAddress}`);
+                return {
+                    success: true,
+                    message: 'Helper app launched successfully'
+                };
             } else {
-                console.log(`❌ [ADB Monitoring] Failed to launch Helper app on ${ipAddress}: ${result}`);
+                console.log(`❌ [ADB Launch] Failed to launch Helper app on ${ipAddress}: ${result}`);
+                return {
+                    success: false,
+                    message: `Failed to launch Helper app: ${result}`
+                };
             }
 
-            return success;
-
         } catch (error) {
-            console.error(`❌ [ADB Monitoring] Error launching Helper app on ${ipAddress}:`, error);
-            return false;
+            console.error(`❌ [ADB Launch] Error launching Helper app on ${ipAddress}:`, error);
+            return {
+                success: false,
+                message: `Launch error: ${error.message}`
+            };
         }
     }
 
@@ -884,15 +1350,15 @@ class ADBService {
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             // Step 3: Launch
-            const launchSuccess = await this.launchHelperApp(ipAddress, port);
+            const launchResult = await this.launchHelperApp(ipAddress, port);
 
-            if (launchSuccess) {
+            if (launchResult.success) {
                 console.log(`✅ [ADB Monitoring] Helper app restarted successfully on ${ipAddress}`);
             } else {
-                console.log(`❌ [ADB Monitoring] Helper app restart failed on ${ipAddress}`);
+                console.log(`❌ [ADB Monitoring] Helper app restart failed on ${ipAddress}: ${launchResult.message}`);
             }
 
-            return launchSuccess;
+            return launchResult.success;
 
         } catch (error) {
             console.error(`❌ [ADB Monitoring] Error restarting Helper app on ${ipAddress}:`, error);

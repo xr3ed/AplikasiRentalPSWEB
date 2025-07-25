@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Detailed Status</title>
+</head>
+<body>
+    <h1>Test Detailed Status Endpoint</h1>
+    <button onclick="testEndpoint()">Test Detailed Status</button>
+    <div id="result"></div>
+
+    <script>
+        async function testEndpoint() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing...';
+            
+            try {
+                console.log('🔍 Testing detailed status endpoint...');
+                
+                // Test with TV ID 1 (might not exist)
+                const response = await fetch('http://localhost:3001/api/tvs/1/detailed-status', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer test',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                resultDiv.innerHTML = `
+                    <h3>Response:</h3>
+                    <p><strong>Status:</strong> ${response.status}</p>
+                    <p><strong>Data:</strong></p>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `
+                    <h3>Error:</h3>
+                    <p>${error.message}</p>
+                `;
+            }
+        }
+        
+        // Auto test on load
+        window.onload = () => {
+            setTimeout(testEndpoint, 1000);
+        };
+    </script>
+</body>
+</html>
